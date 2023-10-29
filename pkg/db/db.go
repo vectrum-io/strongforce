@@ -1,0 +1,23 @@
+package db
+
+import (
+	"context"
+	"github.com/jmoiron/sqlx"
+	"github.com/vectrum-io/strongforce/pkg/events"
+)
+
+type DB interface {
+	Connect() error
+	Close() error
+	Connection() *sqlx.DB
+	Migrate(ctx context.Context) error
+	Tx(ctx context.Context, tx TxFn) error
+	EventTx(ctx context.Context, etx EventTxFn) (*events.EventID, error)
+}
+
+type Migrator interface {
+	Migrate(ctx context.Context, dsn string) error
+}
+
+type TxFn func(ctx context.Context, tx *sqlx.Tx) error
+type EventTxFn func(ctx context.Context, tx *sqlx.Tx) (*events.EventSpec, error)

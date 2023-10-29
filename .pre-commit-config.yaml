@@ -1,0 +1,19 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.4.0
+    hooks:
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v2.4.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [ commit-msg ]
+        args: ["chore", "fix", "feat", "ci", "ops"]
+  - repo: https://github.com/tekwizely/pre-commit-golang
+    rev: v1.0.0-rc.1
+    hooks:
+      - id: go-mod-tidy
+      - id: go-staticcheck-repo-mod
+      - id: go-test-repo-mod
+      - id: go-build-repo-mod

@@ -1,0 +1,7 @@
+syntax = "proto3";
+
+package strongforce.models.v1;
+
+message TestEvent {
+  string data = 1;
+}

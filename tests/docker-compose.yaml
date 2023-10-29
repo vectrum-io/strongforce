@@ -1,0 +1,21 @@
+version: "3.5"
+name: strongforce
+services:
+  db:
+    image: arm64v8/mysql:8
+    restart: always
+    environment:
+      MYSQL_DATABASE: 'strongforce'
+      MYSQL_USER: 'strongforce'
+      MYSQL_PASSWORD: 'strongforce'
+      MYSQL_ROOT_PASSWORD: 'strongforce'
+    ports:
+      - '65001:3306'
+    expose:
+      - '65001'
+  nats:
+    image: nats:2.9
+    ports:
+      - "65002:4222"
+    command:
+      - "-js"

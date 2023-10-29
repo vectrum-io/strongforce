@@ -1,0 +1,19 @@
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+name: Release
+
+jobs:
+  release-please:
+    runs-on: [self-hosted]
+    steps:
+      - uses: google-github-actions/release-please-action@v3
+        with:
+          release-type: go
+          package-name: strongforce
