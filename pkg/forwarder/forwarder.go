@@ -97,6 +97,10 @@ func (fw *DBForwarder) processEvents(ctx context.Context, query string) error {
 		publishedIds = append(publishedIds, event.Metadata.Id)
 	}
 
+	if len(publishedIds) == 0 {
+		return nil
+	}
+
 	// remove published events
 	query, args, err := sqlx.In(fmt.Sprintf("DELETE FROM %s WHERE id IN (?)", fw.outboxTableName), publishedIds)
 	if err != nil {
