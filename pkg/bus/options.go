@@ -10,7 +10,15 @@ type SubscriptionOptions struct {
 	FilterSubject    string
 	GuaranteeOrder   bool
 	MaxDeliveryTries int
+	DeliveryPolicy   DeliveryPolicy
 }
+
+type DeliveryPolicy int
+
+const (
+	DeliverAll DeliveryPolicy = iota
+	DeliverNew
+)
 
 type SubscribeOption func(*SubscriptionOptions)
 
@@ -29,5 +37,11 @@ func WithGuaranteeOrder() SubscribeOption {
 func WithMaxDeliveryTries(maxTries int) SubscribeOption {
 	return func(options *SubscriptionOptions) {
 		options.MaxDeliveryTries = maxTries
+	}
+}
+
+func WithDeliveryPolicy(policy DeliveryPolicy) SubscribeOption {
+	return func(options *SubscriptionOptions) {
+		options.DeliveryPolicy = policy
 	}
 }

@@ -54,7 +54,14 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		opt(&subscriptionOptions)
 	}
 
-	deliverPolicy := jetstream.DeliverNewPolicy
+	var deliverPolicy jetstream.DeliverPolicy
+
+	switch subscriptionOptions.DeliveryPolicy {
+	case bus.DeliverNew:
+		deliverPolicy = jetstream.DeliverNewPolicy
+	case bus.DeliverAll:
+		deliverPolicy = jetstream.DeliverAllPolicy
+	}
 
 	maxAckPending := -1
 	if subscriptionOptions.GuaranteeOrder {
