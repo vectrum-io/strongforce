@@ -57,10 +57,10 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 	var deliverPolicy jetstream.DeliverPolicy
 
 	switch subscriptionOptions.DeliveryPolicy {
-	case bus.DeliverNew:
-		deliverPolicy = jetstream.DeliverNewPolicy
 	case bus.DeliverAll:
 		deliverPolicy = jetstream.DeliverAllPolicy
+	case bus.DeliverNew:
+		deliverPolicy = jetstream.DeliverNewPolicy
 	}
 
 	maxAckPending := -1
@@ -68,8 +68,14 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		maxAckPending = 1
 	}
 
+	var durableName string
+	if subscriptionOptions.Durable {
+		durableName = subscriberName
+	}
+
 	eventsChan, err := b.subscriber.Subscribe(ctx, stream, &SubscribeOpts{
 		ConsumerName:    subscriberName,
+		DurableName:     durableName,
 		CreateConsumer:  true,
 		DeliverPolicy:   &deliverPolicy,
 		FilterSubject:   subscriptionOptions.FilterSubject,

@@ -21,6 +21,7 @@ type SubscriberOptions struct {
 type SubscribeOpts struct {
 	CreateConsumer  bool
 	ConsumerName    string
+	DurableName     string
 	DeliverPolicy   *jetstream.DeliverPolicy
 	FilterSubject   string
 	MaxAckPending   int
@@ -88,6 +89,7 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 	} else {
 		newConsumer, err := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
 			Name:          opts.ConsumerName,
+			Durable:       opts.DurableName,
 			DeliverPolicy: *opts.DeliverPolicy,
 			AckPolicy:     jetstream.AckExplicitPolicy,
 			FilterSubject: opts.FilterSubject,

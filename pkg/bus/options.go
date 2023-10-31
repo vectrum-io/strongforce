@@ -11,6 +11,7 @@ type SubscriptionOptions struct {
 	GuaranteeOrder   bool
 	MaxDeliveryTries int
 	DeliveryPolicy   DeliveryPolicy
+	Durable          bool
 }
 
 type DeliveryPolicy int
@@ -43,5 +44,11 @@ func WithMaxDeliveryTries(maxTries int) SubscribeOption {
 func WithDeliveryPolicy(policy DeliveryPolicy) SubscribeOption {
 	return func(options *SubscriptionOptions) {
 		options.DeliveryPolicy = policy
+	}
+}
+
+func WithDurable() SubscribeOption {
+	return func(options *SubscriptionOptions) {
+		options.Durable = true
 	}
 }
