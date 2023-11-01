@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/vectrum-io/strongforce/compare/v0.2.0...v0.3.0) (2023-10-31)
+
+
+### Features
+
+* support durable consumers ([bd9bc32](https://github.com/vectrum-io/strongforce/commit/bd9bc3227bb0947cf941ddbeb3b704a653cddfd3))
+
 ## [0.2.0](https://github.com/vectrum-io/strongforce/compare/v0.1.1...v0.2.0) (2023-10-31)
 
 
