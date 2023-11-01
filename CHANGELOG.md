@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.0](https://github.com/vectrum-io/strongforce/compare/v0.3.0...v0.4.0) (2023-11-01)
+
+
+### Features
+
+* implements message router and nats broadcast subscriber ([92935ef](https://github.com/vectrum-io/strongforce/commit/92935ef2689ee24ff0a238de711ca157a93e345e))
+
 ## [0.3.0](https://github.com/vectrum-io/strongforce/compare/v0.2.0...v0.3.0) (2023-10-31)
 
 
