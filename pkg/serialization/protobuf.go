@@ -1,7 +1,7 @@
 package serialization
 
 import (
-	"github.com/pkg/errors"
+	"errors"
 	"google.golang.org/protobuf/proto"
 )
 

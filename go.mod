@@ -8,7 +8,6 @@ require (
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/nats-io/nats.go v1.31.0
 	github.com/oklog/ulid/v2 v2.1.0
-	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.8.4
 	github.com/uptrace/opentelemetry-go-extra/otelsql v0.2.3
 	go.opentelemetry.io/otel v1.19.0

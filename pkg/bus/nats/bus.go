@@ -48,7 +48,7 @@ func (b *Bus) Publish(ctx context.Context, message *bus.OutboundMessage) error {
 	return b.broadcaster.Broadcast(ctx, message)
 }
 
-func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream string, opts ...bus.SubscribeOption) (<-chan bus.InboundMessage, error) {
+func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream string, opts ...bus.SubscribeOption) (*bus.Subscription, error) {
 	subscriptionOptions := bus.DefaultSubscriptionOptions
 	for _, opt := range opts {
 		opt(&subscriptionOptions)
@@ -73,7 +73,7 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		durableName = subscriberName
 	}
 
-	eventsChan, err := b.subscriber.Subscribe(ctx, stream, &SubscribeOpts{
+	subscription, err := b.subscriber.Subscribe(ctx, stream, &SubscribeOpts{
 		ConsumerName:    subscriberName,
 		DurableName:     durableName,
 		CreateConsumer:  true,
@@ -86,5 +86,5 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		return nil, err
 	}
 
-	return eventsChan, nil
+	return subscription, nil
 }

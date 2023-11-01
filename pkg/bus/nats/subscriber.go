@@ -6,12 +6,13 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/vectrum-io/strongforce/pkg/bus"
+	"github.com/vectrum-io/strongforce/pkg/serialization"
 	"time"
 )
 
 type Subscriber struct {
-	jetStream  jetstream.JetStream
-	consumeCtx jetstream.ConsumeContext
+	jetStream jetstream.JetStream
+	conn      *nats.Conn
 }
 
 type SubscriberOptions struct {
@@ -26,6 +27,8 @@ type SubscribeOpts struct {
 	FilterSubject   string
 	MaxAckPending   int
 	MaxDeliverTries int
+	MessageBuffer   int
+	Deserializer    serialization.Serializer
 }
 
 func (so *SubscribeOpts) validate() error {
@@ -40,6 +43,31 @@ func (so *SubscribeOpts) validate() error {
 	if so.DeliverPolicy == nil {
 		last := jetstream.DeliverLastPolicy
 		so.DeliverPolicy = &last
+	}
+
+	if so.MessageBuffer == 0 {
+		so.MessageBuffer = 256
+	}
+
+	if so.Deserializer == nil {
+		so.Deserializer = serialization.NewProtobufSerializer()
+	}
+
+	return nil
+}
+
+type SubscribeBroadcastOpts struct {
+	MessageBuffer int
+	Deserializer  serialization.Serializer
+}
+
+func (so *SubscribeBroadcastOpts) validate() error {
+	if so.MessageBuffer == 0 {
+		so.MessageBuffer = 256
+	}
+
+	if so.Deserializer == nil {
+		so.Deserializer = serialization.NewProtobufSerializer()
 	}
 
 	return nil
@@ -60,12 +88,35 @@ func NewSubscriber(opts *SubscriberOptions) (*Subscriber, error) {
 
 	return &Subscriber{
 		jetStream: js,
+		conn:      nc,
 	}, nil
 }
 
-func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *SubscribeOpts) (<-chan bus.InboundMessage, error) {
-	msgChan := make(chan bus.InboundMessage)
+func (ns *Subscriber) SubscribeBroadcast(ctx context.Context, subject string, opts *SubscribeBroadcastOpts) (*bus.Subscription, error) {
+	if opts == nil {
+		opts = &SubscribeBroadcastOpts{}
+	}
 
+	if err := opts.validate(); err != nil {
+		return nil, fmt.Errorf("failed to validate options: %w", err)
+	}
+
+	msgChan := make(chan bus.InboundMessage, opts.MessageBuffer)
+
+	subscription, err := ns.conn.Subscribe(subject, func(msg *nats.Msg) {
+		ns.handleNATSMessage(msg, msgChan)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return bus.NewSubscription(msgChan, opts.Deserializer, func() {
+		_ = subscription.Drain()
+		_ = subscription.Unsubscribe()
+	}), nil
+}
+
+func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *SubscribeOpts) (*bus.Subscription, error) {
 	if opts == nil {
 		opts = &SubscribeOpts{}
 	}
@@ -73,6 +124,8 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 	if err := opts.validate(); err != nil {
 		return nil, fmt.Errorf("failed to validate options: %w", err)
 	}
+
+	msgChan := make(chan bus.InboundMessage, opts.MessageBuffer)
 
 	stream, err := ns.jetStream.Stream(ctx, streamName)
 	if err != nil {
@@ -103,18 +156,32 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 	}
 
 	consumeCtx, err := consumer.Consume(func(msg jetstream.Msg) {
-		ns.handleMessage(msg, msgChan)
+		ns.handleJetStreamMessage(msg, msgChan)
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	ns.consumeCtx = consumeCtx
-
-	return msgChan, nil
+	return bus.NewSubscription(msgChan, opts.Deserializer, func() {
+		consumeCtx.Stop()
+	}), nil
 }
 
-func (ns *Subscriber) handleMessage(msg jetstream.Msg, msgChan chan bus.InboundMessage) {
+func (ns *Subscriber) handleNATSMessage(msg *nats.Msg, msgChan chan bus.InboundMessage) {
+	msgChan <- bus.InboundMessage{
+		Id:      msg.Header.Get(nats.MsgIdHdr),
+		Subject: msg.Subject,
+		Data:    msg.Data,
+		Ack: func() error {
+			return msg.Ack()
+		},
+		Nak: func(delay time.Duration) error {
+			return msg.NakWithDelay(delay)
+		},
+	}
+}
+
+func (ns *Subscriber) handleJetStreamMessage(msg jetstream.Msg, msgChan chan bus.InboundMessage) {
 	msgChan <- bus.InboundMessage{
 		Id:      msg.Headers().Get(jetstream.MsgIDHeader),
 		Subject: msg.Subject(),

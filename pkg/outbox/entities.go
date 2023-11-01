@@ -2,7 +2,7 @@ package outbox
 
 import (
 	"database/sql"
-	"github.com/pkg/errors"
+	"errors"
 	"github.com/vectrum-io/strongforce/pkg/events"
 )
 

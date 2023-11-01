@@ -15,12 +15,12 @@ func (b *Bus) Publish(ctx context.Context, message *bus.OutboundMessage) error {
 	return args.Error(0)
 }
 
-func (b *Bus) Subscribe(ctx context.Context, subscribeName string, stream string, opts ...bus.SubscribeOption) (<-chan bus.InboundMessage, error) {
+func (b *Bus) Subscribe(ctx context.Context, subscribeName string, stream string, opts ...bus.SubscribeOption) (*bus.Subscription, error) {
 	subscribeOpts := bus.DefaultSubscriptionOptions
 	for _, opt := range opts {
 		opt(&subscribeOpts)
 	}
 
 	args := b.Called(subscribeName, stream, subscribeOpts)
-	return args.Get(0).(<-chan bus.InboundMessage), args.Error(1)
+	return args.Get(0).(*bus.Subscription), args.Error(1)
 }

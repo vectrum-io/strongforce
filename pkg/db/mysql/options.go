@@ -1,7 +1,7 @@
 package mysql
 
 import (
-	"github.com/pkg/errors"
+	"errors"
 	"github.com/vectrum-io/strongforce/pkg/db"
 	"github.com/vectrum-io/strongforce/pkg/outbox"
 	"go.uber.org/zap"

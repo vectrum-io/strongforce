@@ -2,12 +2,12 @@ package tests
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"github.com/vectrum-io/strongforce/pkg/bus/nats"
 	sharedtest "github.com/vectrum-io/strongforce/tests/shared"
-	"reflect"
 	"testing"
 )
 
@@ -24,7 +24,7 @@ func TestBusOrderSpam(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	messages, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject))
+	subscription, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject))
 	assert.NoError(t, err)
 
 	// send 5k messages
@@ -37,10 +37,18 @@ func TestBusOrderSpam(t *testing.T) {
 		assert.NoError(t, err)
 	}
 
+	msgChan := make(chan bus.InboundMessage)
+	err = subscription.AddHandler("*", func(ctx context.Context, message bus.InboundMessage) error {
+		msgChan <- message
+		return nil
+	})
+	assert.NoError(t, err)
+
+	subscription.Start(context.Background())
+
 	// validate order
 	for i := 0; i < 5000; i++ {
-		message := <-messages
-		message.Ack()
+		message := <-msgChan
 		assert.Equal(t, fmt.Sprintf("%d", i), string(message.Data))
 	}
 }
@@ -58,10 +66,10 @@ func TestBusOrderConsumerNak(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	messagesA, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
+	subscriptionA, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
 	assert.NoError(t, err)
 
-	messagesB, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
+	subscriptionB, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
 	assert.NoError(t, err)
 
 	// send two messages
@@ -77,36 +85,46 @@ func TestBusOrderConsumerNak(t *testing.T) {
 
 	// get first one
 	t.Log("wait for message 1")
-	message1 := waitForMessage(messagesA, messagesB)
+	message1, res := waitForMessage(subscriptionA, subscriptionB)
 	assert.Equal(t, "0", message1.Id)
 	t.Log("nak message 1")
 	message1.Nak(0)
+	res <- errors.New("failed")
 
 	// expect second message to still be message 0
 	t.Log("wait for message 1 retry")
-	message1Retry := waitForMessage(messagesA, messagesB)
+	message1Retry, res := waitForMessage(subscriptionA, subscriptionB)
 	assert.Equal(t, "0", message1Retry.Id)
-	t.Log("ack message 1 retry")
-	message1Retry.Ack()
+	res <- nil
 
 	t.Log("wait for message 2")
-	message2 := waitForMessage(messagesA, messagesB)
-	message2.Ack()
-	t.Log("ack message 2")
+	message2, res := waitForMessage(subscriptionA, subscriptionB)
+	res <- nil
 	assert.Equal(t, "1", message2.Id)
 
 }
 
-func waitForMessage(channels ...<-chan bus.InboundMessage) bus.InboundMessage {
-	cases := make([]reflect.SelectCase, len(channels))
-	for i, ch := range channels {
-		cases[i] = reflect.SelectCase{
-			Dir:  reflect.SelectRecv,
-			Chan: reflect.ValueOf(ch),
+func waitForMessage(subscriptions ...*bus.Subscription) (bus.InboundMessage, chan error) {
+	resChan := make(chan error)
+	msg := make(chan bus.InboundMessage)
+
+	for _, sub := range subscriptions {
+
+		if sub.IsRunning() {
+			sub.RemoveHandler(">")
+		}
+
+		sub.AddHandler(">", func(ctx context.Context, message bus.InboundMessage) error {
+			msg <- message
+			return <-resChan
+		})
+
+		if !sub.IsRunning() {
+			sub.Start(context.Background())
 		}
 	}
 
-	_, msg, _ := reflect.Select(cases)
+	message := <-msg
 
-	return msg.Interface().(bus.InboundMessage)
+	return message, resChan
 }

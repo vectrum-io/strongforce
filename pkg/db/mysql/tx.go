@@ -2,8 +2,8 @@ package mysql
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/pkg/errors"
 	"github.com/vectrum-io/strongforce/pkg/db"
 )
 
@@ -18,11 +18,11 @@ func (db *MySQL) Tx(ctx context.Context, txFn db.TxFn) (err error) {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic occurred: %+v", p)
 			if rbError := tx.Rollback(); rbError != nil {
-				err = errors.Wrap(err, rbError.Error())
+				err = errors.Join(err, rbError)
 			}
 		} else if err != nil {
 			if rbError := tx.Rollback(); rbError != nil {
-				err = errors.Wrap(err, rbError.Error())
+				err = errors.Join(err, rbError)
 			}
 		} else {
 			err = tx.Commit()
