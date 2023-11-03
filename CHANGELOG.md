@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/vectrum-io/strongforce/compare/v0.4.0...v0.5.0) (2023-11-03)
+
+
+### Features
+
+* implement migrator ([3e8fa07](https://github.com/vectrum-io/strongforce/commit/3e8fa07d1cc2678f454ec7b0f4525e1f92915c0b))
+
 ## [0.4.0](https://github.com/vectrum-io/strongforce/compare/v0.3.0...v0.4.0) (2023-11-01)
 
 
