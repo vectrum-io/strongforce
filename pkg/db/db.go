@@ -10,13 +10,21 @@ type DB interface {
 	Connect() error
 	Close() error
 	Connection() *sqlx.DB
-	Migrate(ctx context.Context) error
+	Migrate(ctx context.Context, options *MigrationOptions) (*MigrationResult, error)
 	Tx(ctx context.Context, tx TxFn) error
 	EventTx(ctx context.Context, etx EventTxFn) (*events.EventID, error)
 }
 
+type MigrationOptions struct {
+	DropTablesBeforeMigrating bool
+}
+
 type Migrator interface {
-	Migrate(ctx context.Context, dsn string) error
+	Migrate(ctx context.Context, dsn string) (*MigrationResult, error)
+}
+
+type MigrationResult struct {
+	AppliedMigrations []string
 }
 
 type TxFn func(ctx context.Context, tx *sqlx.Tx) error

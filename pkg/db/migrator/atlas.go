@@ -4,19 +4,21 @@ import (
 	"ariga.io/atlas-go-sdk/atlasexec"
 	"context"
 	"fmt"
-	"go.uber.org/zap"
+	"github.com/vectrum-io/strongforce/pkg/db"
 )
 
 type Atlas struct {
 	migrationDir    string
 	atlasBinaryPath string
 	atlasBinaryName string
+	baseline        string
 }
 
 type AtlasOptions struct {
 	MigrationDir    string
 	AtlasBinaryPath string
 	AtlasBinaryName string
+	BaselineVersion string
 }
 
 func NewAtlasMigrator(options *AtlasOptions) *Atlas {
@@ -28,36 +30,34 @@ func NewAtlasMigrator(options *AtlasOptions) *Atlas {
 		migrationDir:    options.MigrationDir,
 		atlasBinaryPath: options.AtlasBinaryPath,
 		atlasBinaryName: options.AtlasBinaryName,
+		baseline:        options.BaselineVersion,
 	}
 }
 
-func (a *Atlas) Migrate(ctx context.Context, dsn string) error {
+func (a *Atlas) Migrate(ctx context.Context, dsn string) (*db.MigrationResult, error) {
 	client, err := atlasexec.NewClient(a.atlasBinaryPath, a.atlasBinaryName)
 	if err != nil {
-		return err
+		return nil, fmt.Errorf("failed to create atlas client: %w", err)
 	}
-
-	logger := zap.L().Sugar()
 
 	res, err := client.Apply(ctx, &atlasexec.ApplyParams{
-		DirURL: a.migrationDir,
-		URL:    dsn,
+		URL:             dsn,
+		DirURL:          a.migrationDir,
+		BaselineVersion: a.baseline,
 	})
 	if err != nil {
-		logger.Errorf("Failed to apply migrations: %s", err.Error())
-		return err
-	}
-
-	logger.Infof("Current State: %s", res.Current)
-	logger.Infof("Target State: %s", res.Target)
-
-	for _, applied := range res.Applied {
-		logger.Infof("Applied: %s", applied.Name)
+		return nil, fmt.Errorf("failed to apply migrations: %w", err)
 	}
 
 	if res.Error != "" {
-		return fmt.Errorf("failed to apply: %s", res.Error)
+		return nil, fmt.Errorf("failed to apply: %s", res.Error)
 	}
 
-	return nil
+	appliedMigrations := make([]string, len(res.Applied))
+
+	for i, applied := range res.Applied {
+		appliedMigrations[i] = applied.File.Name
+	}
+
+	return &db.MigrationResult{AppliedMigrations: appliedMigrations}, nil
 }

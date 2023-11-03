@@ -61,9 +61,34 @@ func (db *MySQL) Connection() *sqlx.DB {
 	return db.conn
 }
 
-func (db *MySQL) Migrate(ctx context.Context) error {
+func (db *MySQL) Migrate(ctx context.Context, options *db.MigrationOptions) (*db.MigrationResult, error) {
 	if db.migrator == nil {
-		return ErrNoMigrator
+		return nil, ErrNoMigrator
+	}
+
+	if options.DropTablesBeforeMigrating {
+		if db.Connection() == nil {
+			return nil, fmt.Errorf("cannot drop tables as no connection exists")
+		}
+
+		var tables []string
+		if err := db.Connection().Select(&tables, "SHOW TABLES"); err != nil {
+			return nil, fmt.Errorf("failed to list tables: %w", err)
+		}
+
+		if _, err := db.Connection().Exec("SET FOREIGN_KEY_CHECKS = 0"); err != nil {
+			return nil, fmt.Errorf("failed to disable foreign key checks: %w", err)
+		}
+
+		for _, table := range tables {
+			if _, err := db.Connection().Exec("DROP TABLE " + table); err != nil {
+				return nil, fmt.Errorf("failed to drop table %s: %w", table, err)
+			}
+		}
+
+		if _, err := db.Connection().Exec("SET FOREIGN_KEY_CHECKS = 1"); err != nil {
+			return nil, fmt.Errorf("failed to enable foreign key checks: %w", err)
+		}
 	}
 
 	dsn := fmt.Sprintf("mysql://%s:%s@%s/%s", db.config.User, db.config.Passwd, db.config.Addr, db.config.DBName)
