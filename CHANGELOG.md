@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/vectrum-io/strongforce/compare/v0.5.0...v0.6.0) (2023-12-18)
+
+
+### Features
+
+* adds migrations for NATS streams ([891ca2a](https://github.com/vectrum-io/strongforce/commit/891ca2aedd95c78bf27f55bbee975958ad410098))
+
 ## [0.5.0](https://github.com/vectrum-io/strongforce/compare/v0.4.0...v0.5.0) (2023-11-03)
 
 
