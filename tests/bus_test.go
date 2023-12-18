@@ -4,12 +4,65 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	nats2 "github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/assert"
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"github.com/vectrum-io/strongforce/pkg/bus/nats"
 	sharedtest "github.com/vectrum-io/strongforce/tests/shared"
 	"testing"
+	"time"
 )
+
+func TestNATSStreamMigrator(t *testing.T) {
+	natsBus, err := nats.New(&nats.Options{
+		NATSAddress: "127.0.0.1:65002",
+		Streams: []nats2.StreamConfig{
+			{
+				Name:        "migration-test",
+				Description: "migration test stream",
+				Subjects: []string{
+					"migration.>",
+				},
+				Retention:    nats2.LimitsPolicy,
+				MaxConsumers: -1,
+				MaxMsgs:      -1,
+				MaxBytes:     -1,
+				Discard:      nats2.DiscardOld,
+				Storage:      nats2.FileStorage,
+				Duplicates:   time.Minute,
+			},
+			{
+				Name:        "migration-test-2",
+				Description: "migration test stream 2",
+				Subjects: []string{
+					"migration-two.*.test",
+				},
+				Retention:    nats2.LimitsPolicy,
+				MaxConsumers: -1,
+				MaxMsgs:      -1,
+				MaxBytes:     -1,
+				Discard:      nats2.DiscardOld,
+				Storage:      nats2.FileStorage,
+				Duplicates:   time.Minute,
+			},
+		},
+	})
+	assert.NoError(t, err)
+
+	migrationErr := natsBus.Migrate(context.Background())
+	assert.NoError(t, migrationErr)
+
+	// check nats streams
+	testStreamNats, err := sharedtest.GetNATSStream(sharedtest.NATS, "migration-test")
+	assert.NoError(t, err)
+
+	assert.Equal(t, "migration-test", testStreamNats.Config.Name)
+
+	testStreamTwoNats, err := sharedtest.GetNATSStream(sharedtest.NATS, "migration-test-2")
+	assert.NoError(t, err)
+
+	assert.Equal(t, "migration-test-2", testStreamTwoNats.Config.Name)
+}
 
 func TestBusOrderSpam(t *testing.T) {
 	streamName := "test-spam"

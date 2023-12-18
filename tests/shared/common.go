@@ -61,3 +61,17 @@ func CreateNatsStream(address string, name string, subject string) error {
 
 	return err
 }
+
+func GetNATSStream(address string, name string) (*nats.StreamInfo, error) {
+	nc, err := nats.Connect(address)
+	if err != nil {
+		return nil, err
+	}
+
+	js, err := nc.JetStream(nats.PublishAsyncMaxPending(256))
+	if err != nil {
+		return nil, err
+	}
+
+	return js.StreamInfo(name)
+}

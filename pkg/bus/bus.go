@@ -11,6 +11,8 @@ type Bus interface {
 	Publish(ctx context.Context, message *OutboundMessage) error
 	// Subscribe retrieves messages from the bus in an ordered matter.
 	Subscribe(ctx context.Context, subscriberName string, stream string, opts ...SubscribeOption) (*Subscription, error)
+	// Migrate ensures that dependencies (streams, topic, consumers, etc.) are up to date and ready to be used
+	Migrate(ctx context.Context) error
 }
 
 type OutboundMessage struct {

@@ -24,3 +24,8 @@ func (b *Bus) Subscribe(ctx context.Context, subscribeName string, stream string
 	args := b.Called(subscribeName, stream, subscribeOpts)
 	return args.Get(0).(*bus.Subscription), args.Error(1)
 }
+
+func (b *Bus) Migrate(ctx context.Context) error {
+	args := b.Called()
+	return args.Error(0)
+}

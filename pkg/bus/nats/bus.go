@@ -2,6 +2,9 @@ package nats
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"go.uber.org/zap"
@@ -10,11 +13,14 @@ import (
 type Bus struct {
 	subscriber  *Subscriber
 	broadcaster *Broadcaster
+	options     *Options
+	logger      *zap.SugaredLogger
 }
 
 type Options struct {
 	NATSAddress string
 	Logger      *zap.Logger
+	Streams     []nats.StreamConfig
 }
 
 func New(options *Options) (*Bus, error) {
@@ -41,6 +47,8 @@ func New(options *Options) (*Bus, error) {
 	return &Bus{
 		subscriber:  subscriber,
 		broadcaster: broadcaster,
+		options:     options,
+		logger:      options.Logger.Sugar(),
 	}, nil
 }
 
@@ -87,4 +95,40 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 	}
 
 	return subscription, nil
+}
+
+func (b *Bus) Migrate(ctx context.Context) error {
+	conn, err := nats.Connect(b.options.NATSAddress)
+	if err != nil {
+		return fmt.Errorf("failed to connect to nats: %w", err)
+	}
+
+	js, err := conn.JetStream()
+	if err != nil {
+		return fmt.Errorf("failed to get jetstream context: %w", err)
+	}
+
+	for _, streamConfig := range b.options.Streams {
+		b.logger.Infof("validating nats stream %s", streamConfig.Name)
+		_, err := js.StreamInfo(streamConfig.Name)
+		if err != nil {
+			if !errors.Is(err, nats.ErrStreamNotFound) {
+				return fmt.Errorf("failed to get stream info: %w", err)
+			}
+
+			// create new stream
+			b.logger.Infof("creating new stream %s", streamConfig.Name)
+			if _, err := js.AddStream(&streamConfig); err != nil {
+				return fmt.Errorf("failed to add stream: %w", err)
+			}
+			continue
+		}
+
+		b.logger.Infof("updating existing stream %s", streamConfig.Name)
+		if _, err := js.UpdateStream(&streamConfig); err != nil {
+			return fmt.Errorf("failed to update stream: %w", err)
+		}
+	}
+
+	return nil
 }
