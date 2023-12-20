@@ -7,16 +7,19 @@ import (
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"github.com/vectrum-io/strongforce/pkg/serialization"
+	"go.opentelemetry.io/otel/propagation"
 	"time"
 )
 
 type Subscriber struct {
-	jetStream jetstream.JetStream
-	conn      *nats.Conn
+	jetStream      jetstream.JetStream
+	conn           *nats.Conn
+	otelPropagator propagation.TextMapPropagator
 }
 
 type SubscriberOptions struct {
-	NATSAddress string
+	NATSAddress    string
+	OTelPropagator propagation.TextMapPropagator
 }
 
 type SubscribeOpts struct {
@@ -87,8 +90,9 @@ func NewSubscriber(opts *SubscriberOptions) (*Subscriber, error) {
 	}
 
 	return &Subscriber{
-		jetStream: js,
-		conn:      nc,
+		jetStream:      js,
+		conn:           nc,
+		otelPropagator: opts.OTelPropagator,
 	}, nil
 }
 
@@ -169,9 +173,10 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 
 func (ns *Subscriber) handleNATSMessage(msg *nats.Msg, msgChan chan bus.InboundMessage) {
 	msgChan <- bus.InboundMessage{
-		Id:      msg.Header.Get(nats.MsgIdHdr),
-		Subject: msg.Subject,
-		Data:    msg.Data,
+		MessageCtx: ns.getMessageCtx(context.Background(), msg.Header),
+		Id:         msg.Header.Get(nats.MsgIdHdr),
+		Subject:    msg.Subject,
+		Data:       msg.Data,
 		Ack: func() error {
 			return msg.Ack()
 		},
@@ -183,9 +188,10 @@ func (ns *Subscriber) handleNATSMessage(msg *nats.Msg, msgChan chan bus.InboundM
 
 func (ns *Subscriber) handleJetStreamMessage(msg jetstream.Msg, msgChan chan bus.InboundMessage) {
 	msgChan <- bus.InboundMessage{
-		Id:      msg.Headers().Get(jetstream.MsgIDHeader),
-		Subject: msg.Subject(),
-		Data:    msg.Data(),
+		MessageCtx: ns.getMessageCtx(context.Background(), msg.Headers()),
+		Id:         msg.Headers().Get(jetstream.MsgIDHeader),
+		Subject:    msg.Subject(),
+		Data:       msg.Data(),
 		Ack: func() error {
 			return msg.Ack()
 		},
@@ -193,4 +199,11 @@ func (ns *Subscriber) handleJetStreamMessage(msg jetstream.Msg, msgChan chan bus
 			return msg.NakWithDelay(delay)
 		},
 	}
+}
+
+func (ns *Subscriber) getMessageCtx(ctx context.Context, header nats.Header) context.Context {
+	if ns.otelPropagator == nil {
+		return ctx
+	}
+	return ns.otelPropagator.Extract(ctx, propagation.HeaderCarrier(header))
 }
