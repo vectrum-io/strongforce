@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/vectrum-io/strongforce/compare/v0.6.0...v0.7.0) (2023-12-20)
+
+
+### Features
+
+* adds otlp trace propagation for nats message bus ([4aea600](https://github.com/vectrum-io/strongforce/commit/4aea600bcf4d18933456c8608527785699d4dd07))
+
 ## [0.6.0](https://github.com/vectrum-io/strongforce/compare/v0.5.0...v0.6.0) (2023-12-18)
 
 
