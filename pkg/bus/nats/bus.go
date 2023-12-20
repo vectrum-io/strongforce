@@ -7,6 +7,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/vectrum-io/strongforce/pkg/bus"
+	"go.opentelemetry.io/otel/propagation"
 	"go.uber.org/zap"
 )
 
@@ -18,9 +19,10 @@ type Bus struct {
 }
 
 type Options struct {
-	NATSAddress string
-	Logger      *zap.Logger
-	Streams     []nats.StreamConfig
+	NATSAddress    string
+	Logger         *zap.Logger
+	Streams        []nats.StreamConfig
+	OTelPropagator propagation.TextMapPropagator
 }
 
 func New(options *Options) (*Bus, error) {
@@ -30,15 +32,17 @@ func New(options *Options) (*Bus, error) {
 	}
 
 	subscriber, err := NewSubscriber(&SubscriberOptions{
-		NATSAddress: options.NATSAddress,
+		NATSAddress:    options.NATSAddress,
+		OTelPropagator: options.OTelPropagator,
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	broadcaster, err := NewBroadcaster(&BroadcasterOptions{
-		NATSAddress: options.NATSAddress,
-		Logger:      options.Logger.Sugar(),
+		NATSAddress:    options.NATSAddress,
+		Logger:         options.Logger.Sugar(),
+		OTelPropagator: options.OTelPropagator,
 	})
 	if err != nil {
 		return nil, err

@@ -95,7 +95,7 @@ func (s *Subscription) Start(ctx context.Context) {
 
 				isMessageRouted = true
 
-				if err := fn(ctx, message); err != nil {
+				if err := fn(message.MessageCtx, message); err != nil {
 					handlerErrors = append(handlerErrors, err)
 				}
 			}

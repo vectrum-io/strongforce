@@ -22,6 +22,7 @@ type OutboundMessage struct {
 }
 
 type InboundMessage struct {
+	MessageCtx   context.Context
 	Id           string
 	Subject      string
 	Data         []byte
