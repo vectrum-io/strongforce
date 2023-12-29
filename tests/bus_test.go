@@ -15,7 +15,7 @@ import (
 
 func TestNATSStreamMigrator(t *testing.T) {
 	natsBus, err := nats.New(&nats.Options{
-		NATSAddress: "127.0.0.1:65002",
+		NATSAddress: sharedtest.NATS,
 		Streams: []nats2.StreamConfig{
 			{
 				Name:        "migration-test",
@@ -73,7 +73,7 @@ func TestBusOrderSpam(t *testing.T) {
 	assert.NoError(t, err)
 
 	natsBus, err := nats.New(&nats.Options{
-		NATSAddress: "127.0.0.1:65002",
+		NATSAddress: sharedtest.NATS,
 	})
 	assert.NoError(t, err)
 
@@ -115,7 +115,7 @@ func TestBusOrderConsumerNak(t *testing.T) {
 	assert.NoError(t, err)
 
 	natsBus, err := nats.New(&nats.Options{
-		NATSAddress: "127.0.0.1:65002",
+		NATSAddress: sharedtest.NATS,
 	})
 	assert.NoError(t, err)
 

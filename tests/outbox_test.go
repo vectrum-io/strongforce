@@ -91,3 +91,42 @@ func TestOutbox(t *testing.T) {
 		})
 	}
 }
+
+func TestMultiEventOutbox(t *testing.T) {
+	tableName := "multi_outbox"
+	eventBuilder := events.Builder{}
+
+	db, err := mysql.New(mysql.Options{
+		DSN: sharedtest.DSN,
+		OutboxOptions: &outbox.Options{
+			TableName:  tableName,
+			Serializer: serialization.NewJSONSerializer(),
+		},
+	})
+	assert.NoError(t, err)
+	assert.NoError(t, db.Connect())
+	assert.NoError(t, sharedtest.CreateOutboxTable(db, tableName))
+
+	// run test cases
+	eventIds, err := db.EventsTx(context.Background(), func(ctx context.Context, tx *sqlx.Tx) ([]*events.EventSpec, error) {
+		e1, err := eventBuilder.New("topic.1", &jsonPayload{Data: "test1"})
+		assert.NoError(t, err)
+
+		e2, err := eventBuilder.New("topic.2", &jsonPayload{Data: "test2"})
+		assert.NoError(t, err)
+
+		return []*events.EventSpec{e1, e2}, nil
+	})
+
+	assert.NoError(t, err)
+	assert.Len(t, eventIds, 2)
+
+	// check if event exists in outbox table
+	obEvents, err := sharedtest.GetEventEntities(db, tableName)
+	assert.NoError(t, err)
+
+	assert.Len(t, obEvents, 2)
+
+	assert.Equal(t, obEvents[0].Topic.String, "topic.1")
+	assert.Equal(t, obEvents[1].Topic.String, "topic.2")
+}
