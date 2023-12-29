@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/vectrum-io/strongforce/compare/v0.7.0...v0.8.0) (2023-12-29)
+
+
+### Features
+
+* emit multiple events in one transaction ([50949e3](https://github.com/vectrum-io/strongforce/commit/50949e37a1e469860b6aac94ed44dc7f9c437e87))
+
 ## [0.7.0](https://github.com/vectrum-io/strongforce/compare/v0.6.0...v0.7.0) (2023-12-20)
 
 
