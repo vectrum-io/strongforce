@@ -13,6 +13,7 @@ type DB interface {
 	Migrate(ctx context.Context, options *MigrationOptions) (*MigrationResult, error)
 	Tx(ctx context.Context, tx TxFn) error
 	EventTx(ctx context.Context, etx EventTxFn) (*events.EventID, error)
+	EventsTx(ctx context.Context, etx EventsTxFn) ([]events.EventID, error)
 }
 
 type MigrationOptions struct {
@@ -29,3 +30,4 @@ type MigrationResult struct {
 
 type TxFn func(ctx context.Context, tx *sqlx.Tx) error
 type EventTxFn func(ctx context.Context, tx *sqlx.Tx) (*events.EventSpec, error)
+type EventsTxFn func(ctx context.Context, tx *sqlx.Tx) ([]*events.EventSpec, error)
