@@ -138,7 +138,7 @@ func TestBusOrderConsumerNak(t *testing.T) {
 
 	// get first one
 	t.Log("wait for message 1")
-	message1, res := waitForMessage(subscriptionA, subscriptionB)
+	_, message1, res := waitForMessage(subscriptionA, subscriptionB)
 	assert.Equal(t, "0", message1.Id)
 	t.Log("nak message 1")
 	message1.Nak(0)
@@ -146,20 +146,95 @@ func TestBusOrderConsumerNak(t *testing.T) {
 
 	// expect second message to still be message 0
 	t.Log("wait for message 1 retry")
-	message1Retry, res := waitForMessage(subscriptionA, subscriptionB)
+	_, message1Retry, res := waitForMessage(subscriptionA, subscriptionB)
 	assert.Equal(t, "0", message1Retry.Id)
 	res <- nil
 
 	t.Log("wait for message 2")
-	message2, res := waitForMessage(subscriptionA, subscriptionB)
+	_, message2, res := waitForMessage(subscriptionA, subscriptionB)
 	res <- nil
 	assert.Equal(t, "1", message2.Id)
 
 }
 
-func waitForMessage(subscriptions ...*bus.Subscription) (bus.InboundMessage, chan error) {
+func TestContextPropagation(t *testing.T) {
+	streamName := "test-context-propagation"
+	subject := "test-3"
+
+	// create test stream
+	err := sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject)
+	assert.NoError(t, err)
+
+	natsBus, err := nats.New(&nats.Options{
+		NATSAddress: sharedtest.NATS,
+	})
+	assert.NoError(t, err)
+
+	type testCtxKey struct{}
+
+	ctx := context.WithValue(context.Background(), testCtxKey{}, "test-val")
+
+	subscription, err := natsBus.Subscribe(ctx, streamName+"-"+subject, streamName, bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
+	assert.NoError(t, err)
+
+	err = natsBus.Publish(context.Background(), &bus.OutboundMessage{
+		Id:      "1",
+		Subject: subject,
+		Data:    []byte("test message with context"),
+	})
+	assert.NoError(t, err)
+
+	t.Log("wait for message to be received")
+	ctx, message, res := waitForMessage(subscription)
+	assert.Equal(t, "1", message.Id)
+	assert.Equal(t, ctx, message.MessageCtx)
+	assert.Equal(t, ctx.Value(testCtxKey{}), "test-val")
+	res <- nil
+}
+
+func TestSubscribeContextCancelation(t *testing.T) {
+	streamName := "test-context-cancel"
+	subject := "test-4"
+
+	// create test stream
+	err := sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject)
+	assert.NoError(t, err)
+
+	natsBus, err := nats.New(&nats.Options{
+		NATSAddress: sharedtest.NATS,
+	})
+	assert.NoError(t, err)
+
+	subscription, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
+	assert.NoError(t, err)
+
+	// start subscription
+
+	ctx, cancel := context.WithCancel(context.Background())
+	subscription.Start(ctx)
+
+	assert.Equal(t, true, subscription.IsRunning())
+
+	cancel()
+
+	// wait for subscription to stop
+	time.Sleep(50 * time.Millisecond)
+
+	assert.Equal(t, false, subscription.IsRunning())
+}
+
+type HandlerCall struct {
+	Ctx     context.Context
+	Message bus.InboundMessage
+}
+
+// waitForMessage waits for a message to be received on the given subscriptions.
+// It returns the received message and a channel that can be used to control
+// the handler's return value.
+func waitForMessage(subscriptions ...*bus.Subscription) (context.Context, bus.InboundMessage, chan error) {
+
 	resChan := make(chan error)
-	msg := make(chan bus.InboundMessage)
+	msg := make(chan HandlerCall)
 
 	for _, sub := range subscriptions {
 
@@ -168,7 +243,10 @@ func waitForMessage(subscriptions ...*bus.Subscription) (bus.InboundMessage, cha
 		}
 
 		sub.AddHandler(">", func(ctx context.Context, message bus.InboundMessage) error {
-			msg <- message
+			msg <- HandlerCall{
+				Ctx:     ctx,
+				Message: message,
+			}
 			return <-resChan
 		})
 
@@ -179,5 +257,5 @@ func waitForMessage(subscriptions ...*bus.Subscription) (bus.InboundMessage, cha
 
 	message := <-msg
 
-	return message, resChan
+	return message.Ctx, message.Message, resChan
 }

@@ -80,44 +80,55 @@ func (s *Subscription) Start(ctx context.Context) {
 	s.isRunning = true
 
 	go func() {
-		for message := range s.inboundMessages {
-			isMessageRouted := false
-			var handlerErrors []error
+		for {
+			select {
+			case <-ctx.Done():
+				s.isRunning = false
+				return
+			case message := <-s.inboundMessages:
+				isMessageRouted := false
+				var handlerErrors []error
 
-			// prepare message
-			message.deserializer = s.deserializer
+				// prepare message
+				message.deserializer = s.deserializer
 
-			s.handlersMu.RLock()
-			for pattern, fn := range s.handlers {
-				if !MatchSubject(message.Subject, pattern) {
+				s.handlersMu.RLock()
+				for pattern, fn := range s.handlers {
+					if !MatchSubject(message.Subject, pattern) {
+						continue
+					}
+
+					isMessageRouted = true
+
+					if err := fn(message.MessageCtx, message); err != nil {
+						handlerErrors = append(handlerErrors, err)
+					}
+				}
+				s.handlersMu.RUnlock()
+
+				// could not route message
+				if !isMessageRouted {
+					if s.onError != nil {
+						s.onError(fmt.Errorf("%w: %s", ErrMessageNotRoutable, message.Subject))
+					}
 					continue
 				}
 
-				isMessageRouted = true
+				// there were errors in the handler functions
+				if len(handlerErrors) > 0 {
+					if s.onError != nil {
+						s.onError(fmt.Errorf("%w: %w", ErrMessageHandlerFailed, errors.Join(handlerErrors...)))
+					}
+					continue
+				}
 
-				if err := fn(message.MessageCtx, message); err != nil {
-					handlerErrors = append(handlerErrors, err)
+				if err := message.Ack(); err != nil {
+					if s.onError != nil {
+						s.onError(fmt.Errorf("%w: failed to ack message: %w", ErrMessageHandlerFailed, err))
+					}
+					continue
 				}
 			}
-			s.handlersMu.RUnlock()
-
-			// could not route message
-			if !isMessageRouted {
-				if s.onError != nil {
-					s.onError(fmt.Errorf("%w: %s", ErrMessageNotRoutable, message.Subject))
-				}
-				continue
-			}
-
-			// there were errors in the handler functions
-			if len(handlerErrors) > 0 {
-				if s.onError != nil {
-					s.onError(fmt.Errorf("%w: %w", ErrMessageHandlerFailed, errors.Join(handlerErrors...)))
-				}
-				continue
-			}
-
-			message.Ack()
 		}
 	}()
 }
