@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/vectrum-io/strongforce/compare/v0.8.0...v0.8.1) (2023-12-30)
+
+
+### Bug Fixes
+
+* context propagation ([130bdd3](https://github.com/vectrum-io/strongforce/commit/130bdd32ab8b1f348678153cd7062876d6b48466))
+
 ## [0.8.0](https://github.com/vectrum-io/strongforce/compare/v0.7.0...v0.8.0) (2023-12-29)
 
 
