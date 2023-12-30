@@ -108,7 +108,7 @@ func (ns *Subscriber) SubscribeBroadcast(ctx context.Context, subject string, op
 	msgChan := make(chan bus.InboundMessage, opts.MessageBuffer)
 
 	subscription, err := ns.conn.Subscribe(subject, func(msg *nats.Msg) {
-		ns.handleNATSMessage(msg, msgChan)
+		ns.handleNATSMessage(ctx, msg, msgChan)
 	})
 	if err != nil {
 		return nil, err
@@ -160,7 +160,7 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 	}
 
 	consumeCtx, err := consumer.Consume(func(msg jetstream.Msg) {
-		ns.handleJetStreamMessage(msg, msgChan)
+		ns.handleJetStreamMessage(ctx, msg, msgChan)
 	})
 	if err != nil {
 		return nil, err
@@ -171,9 +171,9 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 	}), nil
 }
 
-func (ns *Subscriber) handleNATSMessage(msg *nats.Msg, msgChan chan bus.InboundMessage) {
+func (ns *Subscriber) handleNATSMessage(parentCtx context.Context, msg *nats.Msg, msgChan chan bus.InboundMessage) {
 	msgChan <- bus.InboundMessage{
-		MessageCtx: ns.getMessageCtx(context.Background(), msg.Header),
+		MessageCtx: ns.getMessageCtx(parentCtx, msg.Header),
 		Id:         msg.Header.Get(nats.MsgIdHdr),
 		Subject:    msg.Subject,
 		Data:       msg.Data,
@@ -186,9 +186,9 @@ func (ns *Subscriber) handleNATSMessage(msg *nats.Msg, msgChan chan bus.InboundM
 	}
 }
 
-func (ns *Subscriber) handleJetStreamMessage(msg jetstream.Msg, msgChan chan bus.InboundMessage) {
+func (ns *Subscriber) handleJetStreamMessage(parentCtx context.Context, msg jetstream.Msg, msgChan chan bus.InboundMessage) {
 	msgChan <- bus.InboundMessage{
-		MessageCtx: ns.getMessageCtx(context.Background(), msg.Headers()),
+		MessageCtx: ns.getMessageCtx(parentCtx, msg.Headers()),
 		Id:         msg.Headers().Get(jetstream.MsgIDHeader),
 		Subject:    msg.Subject(),
 		Data:       msg.Data(),
