@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.0](https://github.com/vectrum-io/strongforce/compare/v0.8.1...v0.9.0) (2024-01-24)
+
+
+### Features
+
+* support multiple filter subjects in subscriptions ([65c72eb](https://github.com/vectrum-io/strongforce/commit/65c72eb5e19af0878f8803b5e02fdb4d5830cdee))
+
 ## [0.8.1](https://github.com/vectrum-io/strongforce/compare/v0.8.0...v0.8.1) (2023-12-30)
 
 
