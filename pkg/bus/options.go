@@ -5,13 +5,13 @@ import (
 )
 
 var DefaultSubscriptionOptions = SubscriptionOptions{
-	FilterSubject:    "",
+	FilterSubjects:   []string{},
 	GuaranteeOrder:   false,
 	MaxDeliveryTries: 10,
 }
 
 type SubscriptionOptions struct {
-	FilterSubject    string
+	FilterSubjects   []string
 	GuaranteeOrder   bool
 	MaxDeliveryTries int
 	DeliveryPolicy   DeliveryPolicy
@@ -30,7 +30,7 @@ type SubscribeOption func(*SubscriptionOptions)
 
 func WithFilterSubject(subject string) SubscribeOption {
 	return func(options *SubscriptionOptions) {
-		options.FilterSubject = subject
+		options.FilterSubjects = append(options.FilterSubjects, subject)
 	}
 }
 

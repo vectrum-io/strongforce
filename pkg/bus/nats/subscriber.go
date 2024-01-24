@@ -3,6 +3,7 @@ package nats
 import (
 	"context"
 	"fmt"
+	"github.com/hashicorp/go-version"
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 	"github.com/vectrum-io/strongforce/pkg/bus"
@@ -15,6 +16,7 @@ type Subscriber struct {
 	jetStream      jetstream.JetStream
 	conn           *nats.Conn
 	otelPropagator propagation.TextMapPropagator
+	natsVersion    *version.Version
 }
 
 type SubscriberOptions struct {
@@ -23,18 +25,21 @@ type SubscriberOptions struct {
 }
 
 type SubscribeOpts struct {
-	CreateConsumer  bool
-	ConsumerName    string
-	DurableName     string
-	DeliverPolicy   *jetstream.DeliverPolicy
-	FilterSubject   string
+	CreateConsumer bool
+	ConsumerName   string
+	DurableName    string
+	DeliverPolicy  *jetstream.DeliverPolicy
+	// Deprecated: only use for nats < 2.10
+	FilterSubject string
+	// use filter subjects for nats >= 2.10
+	FilterSubjects  []string
 	MaxAckPending   int
 	MaxDeliverTries int
 	MessageBuffer   int
 	Deserializer    serialization.Serializer
 }
 
-func (so *SubscribeOpts) validate() error {
+func (so *SubscribeOpts) validate(natsVersion *version.Version) error {
 	if so.MaxAckPending == 0 {
 		so.MaxAckPending = -1
 	}
@@ -54,6 +59,18 @@ func (so *SubscribeOpts) validate() error {
 
 	if so.Deserializer == nil {
 		so.Deserializer = serialization.NewProtobufSerializer()
+	}
+
+	// only nats >= 2.10 supports multiple filter subjects
+	if natsVersion.LessThan(version.Must(version.NewVersion("2.10.0"))) {
+		if len(so.FilterSubjects) > 1 {
+			return fmt.Errorf("multiple filter subjects are not supported by nats version %s", natsVersion.String())
+		}
+
+		if len(so.FilterSubjects) == 1 {
+			so.FilterSubject = so.FilterSubjects[0]
+			so.FilterSubjects = []string{}
+		}
 	}
 
 	return nil
@@ -89,10 +106,16 @@ func NewSubscriber(opts *SubscriberOptions) (*Subscriber, error) {
 		return nil, err
 	}
 
+	natsVersion, err := version.NewVersion(nc.ConnectedServerVersion())
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse nats version: %w", err)
+	}
+
 	return &Subscriber{
 		jetStream:      js,
 		conn:           nc,
 		otelPropagator: opts.OTelPropagator,
+		natsVersion:    natsVersion,
 	}, nil
 }
 
@@ -125,7 +148,7 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 		opts = &SubscribeOpts{}
 	}
 
-	if err := opts.validate(); err != nil {
+	if err := opts.validate(ns.natsVersion); err != nil {
 		return nil, fmt.Errorf("failed to validate options: %w", err)
 	}
 
@@ -144,15 +167,18 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 		}
 		consumer = existingConsumer
 	} else {
-		newConsumer, err := stream.CreateOrUpdateConsumer(ctx, jetstream.ConsumerConfig{
-			Name:          opts.ConsumerName,
-			Durable:       opts.DurableName,
-			DeliverPolicy: *opts.DeliverPolicy,
-			AckPolicy:     jetstream.AckExplicitPolicy,
-			FilterSubject: opts.FilterSubject,
-			MaxDeliver:    opts.MaxDeliverTries,
-			MaxAckPending: opts.MaxAckPending,
-		})
+		consumerConfig := jetstream.ConsumerConfig{
+			Name:           opts.ConsumerName,
+			Durable:        opts.DurableName,
+			DeliverPolicy:  *opts.DeliverPolicy,
+			AckPolicy:      jetstream.AckExplicitPolicy,
+			FilterSubject:  opts.FilterSubject,
+			FilterSubjects: opts.FilterSubjects,
+			MaxDeliver:     opts.MaxDeliverTries,
+			MaxAckPending:  opts.MaxAckPending,
+		}
+
+		newConsumer, err := stream.CreateOrUpdateConsumer(ctx, consumerConfig)
 		if err != nil {
 			return nil, err
 		}
