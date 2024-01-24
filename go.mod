@@ -5,6 +5,7 @@ go 1.21.1
 require (
 	ariga.io/atlas-go-sdk v0.1.0
 	github.com/go-sql-driver/mysql v1.7.1
+	github.com/hashicorp/go-version v1.6.0
 	github.com/jmoiron/sqlx v1.3.5
 	github.com/nats-io/nats.go v1.31.0
 	github.com/oklog/ulid/v2 v2.1.0
