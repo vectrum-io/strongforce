@@ -44,7 +44,7 @@ func (db *MySQL) EventTx(ctx context.Context, etxFn db.EventTxFn) (eventId *even
 		return nil, txErr
 	}
 
-	return db.outbox.EmitEvent(ctx, tx.Tx, event)
+	return db.outbox.EmitEvent(ctx, tx, event)
 }
 
 // EventsTx is a convenience method for emitting multiple events in a single transaction.
@@ -80,7 +80,7 @@ func (db *MySQL) EventsTx(ctx context.Context, etxFn db.EventsTxFn) (eventIds []
 	}
 
 	for _, spec := range eventSpecs {
-		eventId, err := db.outbox.EmitEvent(ctx, tx.Tx, spec)
+		eventId, err := db.outbox.EmitEvent(ctx, tx, spec)
 		if err != nil {
 			return nil, err
 		}

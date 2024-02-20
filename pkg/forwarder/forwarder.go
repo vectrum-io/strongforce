@@ -102,10 +102,12 @@ func (fw *DBForwarder) processEvents(ctx context.Context, query string) error {
 	}
 
 	// remove published events
-	query, args, err := sqlx.In(fmt.Sprintf("DELETE FROM %s WHERE id IN (?)", fw.outboxTableName), publishedIds)
+	queryString := fmt.Sprintf("DELETE FROM %s WHERE id IN (?)", fw.outboxTableName)
+	query, args, err := sqlx.In(queryString, publishedIds)
 	if err != nil {
 		return fmt.Errorf("failed to construct deletion query: %w", err)
 	}
+	query = fw.db.Connection().Rebind(queryString)
 
 	_, err = fw.db.Connection().ExecContext(ctx, query, args...)
 	if err != nil {
