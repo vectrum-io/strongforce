@@ -90,7 +90,7 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		DurableName:     durableName,
 		CreateConsumer:  true,
 		DeliverPolicy:   &deliverPolicy,
-		FilterSubject:   subscriptionOptions.FilterSubject,
+		FilterSubjects:  subscriptionOptions.FilterSubjects,
 		MaxDeliverTries: subscriptionOptions.MaxDeliveryTries,
 		MaxAckPending:   maxAckPending,
 	})

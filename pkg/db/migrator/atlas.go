@@ -40,7 +40,7 @@ func (a *Atlas) Migrate(ctx context.Context, dsn string) (*db.MigrationResult, e
 		return nil, fmt.Errorf("failed to create atlas client: %w", err)
 	}
 
-	res, err := client.Apply(ctx, &atlasexec.ApplyParams{
+	res, err := client.MigrateApply(ctx, &atlasexec.MigrateApplyParams{
 		URL:             dsn,
 		DirURL:          a.migrationDir,
 		BaselineVersion: a.baseline,

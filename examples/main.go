@@ -64,7 +64,7 @@ func SimpleNATSPubSub() error {
 	tracer := otel.Tracer("test-tracer")
 
 	sf, err := strongforce.New(strongforce.WithNATS(&nats.Options{
-		NATSAddress: "nats://localhost:65002",
+		NATSAddress: "nats://localhost:64002",
 		Logger:      logger,
 		Streams: []nats2.StreamConfig{
 			{
@@ -96,7 +96,9 @@ func SimpleNATSPubSub() error {
 		return fmt.Errorf("failed to migrate bus: %w", err)
 	}
 
-	subscription, subscribeErr := sf.Bus().Subscribe(context.Background(), "test", "test")
+	subscription, subscribeErr := sf.Bus().Subscribe(context.Background(), "test", "test",
+		bus.WithFilterSubject("test.>"),
+	)
 
 	if subscribeErr != nil {
 		return fmt.Errorf("failed to subscribe to topic: %w", subscribeErr)
