@@ -11,8 +11,6 @@ services:
       MYSQL_ROOT_PASSWORD: 'strongforce'
     ports:
       - '65001:3306'
-    expose:
-      - '65001'
   nats:
     image: nats:2.9
     ports:
@@ -27,4 +25,4 @@ services:
       POSTGRES_USER: strongforce
       POSTGRES_DB: strongforce
     ports:
-      - 5432:5432
+      - '65002:5432'
