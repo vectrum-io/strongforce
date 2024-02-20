@@ -12,9 +12,8 @@ import (
 )
 
 var (
-	ErrNoDB      = errors.New("no database configured")
-	ErrNoQuestDB = errors.New("no questdb-database configured")
-	ErrNoBus     = errors.New("no bus configured")
+	ErrNoDB  = errors.New("no database configured")
+	ErrNoBus = errors.New("no bus configured")
 )
 
 type clientOptions struct {
@@ -71,13 +70,11 @@ func (co *clientOptions) CreateClient() (*Client, error) {
 	}
 
 	if co.postgresOptions != nil {
-		fmt.Println("POSTGRES OPTIONS:", *co.postgresOptions)
 		postgresDB, err := postgres.New(*co.postgresOptions)
 		if err != nil {
-			fmt.Println("No questdb database configured")
-		} else {
-			client.postgresQuestDB = postgresDB
+			return nil, fmt.Errorf("failed to create database: %w", err)
 		}
+		client.db = postgresDB
 	}
 
 	if co.natsOptions != nil {
@@ -89,12 +86,10 @@ func (co *clientOptions) CreateClient() (*Client, error) {
 	}
 
 	if co.forwarderOptions != nil {
-		if co.mysqlOptions == nil {
+		if client.db == nil {
 			return nil, fmt.Errorf("cannot create forwarder: %w", ErrNoDB)
 		}
-		if co.postgresOptions == nil {
-			fmt.Println("POSTGRES:", ErrNoQuestDB)
-		}
+
 		if co.natsOptions == nil {
 			return nil, fmt.Errorf("cannot create forwarder: %w", ErrNoBus)
 		}

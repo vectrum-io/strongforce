@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-func TestClientCreation(t *testing.T) {
+func TestClientCreationMySQL(t *testing.T) {
 
 	outboxTable := "client_creation_1"
 
@@ -24,6 +24,31 @@ func TestClientCreation(t *testing.T) {
 				TableName: outboxTable,
 			},
 		}),
+		strongforce.WithForwarder(&forwarder.Options{
+			OutboxTableName: outboxTable,
+		}),
+		strongforce.WithNATS(&nats.Options{
+			NATSAddress: sharedtest.NATS,
+		}),
+	)
+
+	assert.NoError(t, err)
+
+	assert.NotNil(t, client.DB())
+	assert.NotNil(t, client.Bus())
+	assert.NotNil(t, client.EventBuilder())
+
+	assert.NoError(t, client.Init())
+
+	assert.NoError(t, client.DB().Connection().Ping())
+}
+
+func TestClientCreationPostgres(t *testing.T) {
+
+	outboxTable := "client_creation_2"
+
+	// create new client
+	client, err := strongforce.New(
 		strongforce.WithPostgres(&postgres.Options{
 			DSN: sharedtest.PostgresDSN,
 			OutboxOptions: &outbox.Options{
@@ -41,12 +66,10 @@ func TestClientCreation(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NotNil(t, client.DB())
-	assert.NotNil(t, client.PostgresQuestDB())
 	assert.NotNil(t, client.Bus())
 	assert.NotNil(t, client.EventBuilder())
 
 	assert.NoError(t, client.Init())
 
 	assert.NoError(t, client.DB().Connection().Ping())
-	assert.NoError(t, client.PostgresQuestDB().Connection().Ping())
 }
