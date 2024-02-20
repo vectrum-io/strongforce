@@ -27,6 +27,7 @@ func New(opts ...Option) (*Client, error) {
 	for _, opt := range opts {
 		opt(options)
 	}
+
 	return options.CreateClient()
 }
 
@@ -36,6 +37,7 @@ func (sf *Client) Init() error {
 			return err
 		}
 	}
+
 	if sf.forwarder != nil {
 		go func() {
 			err := sf.forwarder.Start(context.Background())

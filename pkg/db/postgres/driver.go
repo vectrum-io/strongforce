@@ -39,7 +39,6 @@ func New(options Options) (*PostgresSQL, error) {
 }
 
 func (db *PostgresSQL) Connect() error {
-	// TODO: add dbname, currently no dsn parser exists,therefore its not implemented
 	connection, err := otelsql.Open("postgres", db.dsn, otelsql.WithAttributes(semconv.DBSystemPostgreSQL))
 	if err != nil {
 		return err
