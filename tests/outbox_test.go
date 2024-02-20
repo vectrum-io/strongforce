@@ -59,7 +59,7 @@ func TestOutboxMySQL(t *testing.T) {
 
 		t.Run(testCase.name, func(t *testing.T) {
 			db, err := mysql.New(mysql.Options{
-				DSN: sharedtest.DSN,
+				DSN: sharedtest.MySQLDSN,
 				OutboxOptions: &outbox.Options{
 					TableName:  tableName,
 					Serializer: testCase.serializer,
@@ -165,7 +165,7 @@ func TestMultiEventOutboxMySQL(t *testing.T) {
 	eventBuilder := events.Builder{}
 
 	db, err := mysql.New(mysql.Options{
-		DSN: sharedtest.DSN,
+		DSN: sharedtest.MySQLDSN,
 		OutboxOptions: &outbox.Options{
 			TableName:  tableName,
 			Serializer: serialization.NewJSONSerializer(),

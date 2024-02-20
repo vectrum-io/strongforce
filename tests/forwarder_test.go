@@ -35,7 +35,7 @@ func TestForwardMySQL(t *testing.T) {
 	tableName := "event_outbox_fw_1"
 
 	db, err := mysql.New(mysql.Options{
-		DSN: sharedtest.DSN,
+		DSN: sharedtest.MySQLDSN,
 	})
 	assert.NoError(t, err)
 
@@ -130,7 +130,7 @@ func TestForwardFailedMySQL(t *testing.T) {
 	tableName := "event_outbox_fw_2"
 
 	db, err := mysql.New(mysql.Options{
-		DSN: sharedtest.DSN,
+		DSN: sharedtest.MySQLDSN,
 	})
 	assert.NoError(t, err)
 	assert.NoError(t, db.Connect())

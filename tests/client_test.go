@@ -19,7 +19,7 @@ func TestClientCreationMySQL(t *testing.T) {
 	// create new client
 	client, err := strongforce.New(
 		strongforce.WithMySQL(&mysql.Options{
-			DSN: sharedtest.DSN,
+			DSN: sharedtest.MySQLDSN,
 			OutboxOptions: &outbox.Options{
 				TableName: outboxTable,
 			},
