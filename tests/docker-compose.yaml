@@ -19,3 +19,12 @@ services:
       - "23945:4222"
     command:
       - "-js"
+  postgres:
+    image: postgres:12.18
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: strongforce
+      POSTGRES_USER: strongforce
+      POSTGRES_DB: strongforce
+    ports:
+      - 5432:5432

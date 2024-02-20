@@ -5,6 +5,7 @@ import (
 	"github.com/vectrum-io/strongforce"
 	"github.com/vectrum-io/strongforce/pkg/bus/nats"
 	"github.com/vectrum-io/strongforce/pkg/db/mysql"
+	"github.com/vectrum-io/strongforce/pkg/db/postgres"
 	"github.com/vectrum-io/strongforce/pkg/forwarder"
 	"github.com/vectrum-io/strongforce/pkg/outbox"
 	sharedtest "github.com/vectrum-io/strongforce/tests/shared"
@@ -23,6 +24,12 @@ func TestClientCreation(t *testing.T) {
 				TableName: outboxTable,
 			},
 		}),
+		strongforce.WithPostgres(&postgres.Options{
+			DSN: sharedtest.PostgresDSN,
+			OutboxOptions: &outbox.Options{
+				TableName: outboxTable,
+			},
+		}),
 		strongforce.WithForwarder(&forwarder.Options{
 			OutboxTableName: outboxTable,
 		}),
@@ -34,10 +41,12 @@ func TestClientCreation(t *testing.T) {
 	assert.NoError(t, err)
 
 	assert.NotNil(t, client.DB())
+	assert.NotNil(t, client.PostgresQuestDB())
 	assert.NotNil(t, client.Bus())
 	assert.NotNil(t, client.EventBuilder())
 
 	assert.NoError(t, client.Init())
 
 	assert.NoError(t, client.DB().Connection().Ping())
+	assert.NoError(t, client.PostgresQuestDB().Connection().Ping())
 }

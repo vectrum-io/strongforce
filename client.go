@@ -2,6 +2,7 @@ package strongforce
 
 import (
 	"context"
+	"fmt"
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"github.com/vectrum-io/strongforce/pkg/db"
 	"github.com/vectrum-io/strongforce/pkg/events"
@@ -10,16 +11,18 @@ import (
 )
 
 type Client struct {
-	db           db.DB
-	eventBuilder *events.Builder
-	forwarder    *forwarder.DBForwarder
-	bus          bus.Bus
+	db              db.DB
+	eventBuilder    *events.Builder
+	forwarder       *forwarder.DBForwarder
+	bus             bus.Bus
+	postgresQuestDB db.DB
 }
 
 type Options struct {
-	DB     db.DB
-	Bus    bus.Bus
-	Logger *zap.Logger
+	DB              db.DB
+	Bus             bus.Bus
+	Logger          *zap.Logger
+	PostgresQuestDB db.DB
 }
 
 func New(opts ...Option) (*Client, error) {
@@ -27,7 +30,6 @@ func New(opts ...Option) (*Client, error) {
 	for _, opt := range opts {
 		opt(options)
 	}
-
 	return options.CreateClient()
 }
 
@@ -37,7 +39,13 @@ func (sf *Client) Init() error {
 			return err
 		}
 	}
-
+	if sf.postgresQuestDB != nil {
+		fmt.Println("POSTGRES CONNECTION NOW")
+		if err := sf.postgresQuestDB.Connect(); err != nil {
+			fmt.Println("CONNECTION ERROR POSTGRES:", err)
+			return err
+		}
+	}
 	if sf.forwarder != nil {
 		go func() {
 			err := sf.forwarder.Start(context.Background())
@@ -58,4 +66,8 @@ func (sf *Client) Bus() bus.Bus {
 
 func (sf *Client) EventBuilder() *events.Builder {
 	return sf.eventBuilder
+}
+
+func (sf *Client) PostgresQuestDB() db.DB {
+	return sf.postgresQuestDB
 }
