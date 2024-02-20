@@ -107,7 +107,8 @@ func (fw *DBForwarder) processEvents(ctx context.Context, query string) error {
 	if err != nil {
 		return fmt.Errorf("failed to construct deletion query: %w", err)
 	}
-	query = fw.db.Connection().Rebind(queryString)
+
+	query = fw.db.Connection().Rebind(query)
 
 	_, err = fw.db.Connection().ExecContext(ctx, query, args...)
 	if err != nil {

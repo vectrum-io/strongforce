@@ -42,7 +42,7 @@ func (a *Atlas) Migrate(ctx context.Context, dsn string) (*db.MigrationResult, e
 
 	res, err := client.MigrateApply(ctx, &atlasexec.MigrateApplyParams{
 		URL:             dsn,
-		DirURL:          a.migrationDir,
+		DirURL:          fmt.Sprintf("file://%s", a.migrationDir),
 		BaselineVersion: a.baseline,
 	})
 	if err != nil {

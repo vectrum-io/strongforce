@@ -21,7 +21,7 @@ require (
 )
 
 require (
-	ariga.io/atlas v0.15.0 // indirect
+	ariga.io/atlas v0.19.0 // indirect
 	github.com/agext/levenshtein v1.2.3 // indirect
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect

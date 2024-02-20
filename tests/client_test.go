@@ -13,7 +13,6 @@ import (
 )
 
 func TestClientCreationMySQL(t *testing.T) {
-
 	outboxTable := "client_creation_1"
 
 	// create new client
@@ -44,7 +43,6 @@ func TestClientCreationMySQL(t *testing.T) {
 }
 
 func TestClientCreationPostgres(t *testing.T) {
-
 	outboxTable := "client_creation_2"
 
 	// create new client
