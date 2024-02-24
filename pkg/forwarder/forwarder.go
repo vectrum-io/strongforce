@@ -109,7 +109,6 @@ func (fw *DBForwarder) processEvents(ctx context.Context, query string) error {
 	}
 
 	query = fw.db.Connection().Rebind(query)
-
 	_, err = fw.db.Connection().ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("failed to delete published events: %w", err)
