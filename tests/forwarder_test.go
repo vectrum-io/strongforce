@@ -61,7 +61,7 @@ func TestForwardFailedMySQL(t *testing.T) {
 
 func TestForwardPostgres(t *testing.T) {
 	mockBus := &mocks.Bus{}
-	tableName := "event_outbox_fw_4"
+	tableName := "event_outbox_fw_1"
 
 	db, err := postgres.New(postgres.Options{
 		DSN: sharedtest.PostgresDSN,
