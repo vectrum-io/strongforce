@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.10.0](https://github.com/vectrum-io/strongforce/compare/v0.9.0...v0.10.0) (2024-02-25)
+
+
+### Features
+
+* add postgres ([302680f](https://github.com/vectrum-io/strongforce/commit/302680f1827eeed799375bf4cad920dbfd1a35c9))
+* add postgres implementation and tests... ([0dc5800](https://github.com/vectrum-io/strongforce/commit/0dc58009a7a38e5dc617677dcd85e9a13fc51009))
+* use some arbitrary port for postgres to void conflicts during tests ([0c50283](https://github.com/vectrum-io/strongforce/commit/0c502832db09618d147ef9f2674381152a2e6197))
+
 ## [0.9.0](https://github.com/vectrum-io/strongforce/compare/v0.8.1...v0.9.0) (2024-01-24)
 
 
