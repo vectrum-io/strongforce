@@ -8,6 +8,28 @@ import (
 )
 
 //goland:noinspection SqlNoDataSourceInspection
+const mysqlCreateTable = `
+		CREATE TABLE IF NOT EXISTS %s (
+		  id char(36) NOT NULL,
+		  topic varchar(255) NOT NULL,
+		  payload blob NOT NULL,
+		  created_at datetime NULL DEFAULT CURRENT_TIMESTAMP,
+		  PRIMARY KEY (id)
+		)
+`
+
+//goland:noinspection SqlNoDataSourceInspection
+const postgresCreateTable = `
+		CREATE TABLE IF NOT EXISTS %s (
+		  id VARCHAR(36) NOT NULL,
+		  topic VARCHAR(255) NOT NULL,
+		  payload BYTEA NOT NULL,
+		  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		  PRIMARY KEY (id)
+		)
+`
+
+//goland:noinspection SqlNoDataSourceInspection
 func CreateOutboxTable(db db.DB, name string) error {
 	_, err := db.Connection().Exec(fmt.Sprintf(
 		"DROP TABLE IF EXISTS %s",
@@ -17,15 +39,14 @@ func CreateOutboxTable(db db.DB, name string) error {
 		return err
 	}
 
-	query := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s (
-		  id char(36) NOT NULL,
-		  topic varchar(255) NOT NULL,
-		  payload blob NOT NULL,
-		  created_at datetime NULL DEFAULT CURRENT_TIMESTAMP,
-		  PRIMARY KEY (id)
-		)
-	`, name)
+	var query string
+	if db.Connection().DriverName() == "mysql" {
+		query = fmt.Sprintf(mysqlCreateTable, name)
+	} else if db.Connection().DriverName() == "postgres" {
+		query = fmt.Sprintf(postgresCreateTable, name)
+	} else {
+		return fmt.Errorf("unsupported database driver: %s", db.Connection().DriverName())
+	}
 
 	_, err = db.Connection().Exec(query)
 	return err

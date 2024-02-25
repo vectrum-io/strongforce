@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/vectrum-io/strongforce/pkg/bus/nats"
 	"github.com/vectrum-io/strongforce/pkg/db/mysql"
+	"github.com/vectrum-io/strongforce/pkg/db/postgres"
 	"github.com/vectrum-io/strongforce/pkg/events"
 	"github.com/vectrum-io/strongforce/pkg/forwarder"
 	"go.uber.org/zap"
@@ -17,6 +18,7 @@ var (
 
 type clientOptions struct {
 	mysqlOptions     *mysql.Options
+	postgresOptions  *postgres.Options
 	forwarderOptions *forwarder.Options
 	natsOptions      *nats.Options
 	logger           *zap.Logger
@@ -42,6 +44,12 @@ func WithNATS(options *nats.Options) Option {
 	}
 }
 
+func WithPostgres(options *postgres.Options) Option {
+	return func(o *clientOptions) {
+		o.postgresOptions = options
+	}
+}
+
 func WithForwarder(options *forwarder.Options) Option {
 	return func(o *clientOptions) {
 		o.forwarderOptions = options
@@ -61,6 +69,14 @@ func (co *clientOptions) CreateClient() (*Client, error) {
 		client.db = db
 	}
 
+	if co.postgresOptions != nil {
+		postgresDB, err := postgres.New(*co.postgresOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create database: %w", err)
+		}
+		client.db = postgresDB
+	}
+
 	if co.natsOptions != nil {
 		natsBus, err := nats.New(co.natsOptions)
 		if err != nil {
@@ -70,9 +86,10 @@ func (co *clientOptions) CreateClient() (*Client, error) {
 	}
 
 	if co.forwarderOptions != nil {
-		if co.mysqlOptions == nil {
+		if client.db == nil {
 			return nil, fmt.Errorf("cannot create forwarder: %w", ErrNoDB)
 		}
+
 		if co.natsOptions == nil {
 			return nil, fmt.Errorf("cannot create forwarder: %w", ErrNoBus)
 		}

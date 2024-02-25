@@ -1,4 +1,4 @@
-package mysql
+package postgres
 
 import (
 	"context"
@@ -13,7 +13,7 @@ var (
 )
 
 // EventTx is a convenience method for emitting a single event in a single transaction.
-func (db *MySQL) EventTx(ctx context.Context, etxFn db.EventTxFn) (eventId *events.EventID, err error) {
+func (db *PostgresSQL) EventTx(ctx context.Context, etxFn db.EventTxFn) (eventId *events.EventID, err error) {
 	if db.outbox == nil {
 		return nil, ErrNoOutboxConfigured
 	}
@@ -48,7 +48,7 @@ func (db *MySQL) EventTx(ctx context.Context, etxFn db.EventTxFn) (eventId *even
 }
 
 // EventsTx is a convenience method for emitting multiple events in a single transaction.
-func (db *MySQL) EventsTx(ctx context.Context, etxFn db.EventsTxFn) (eventIds []events.EventID, err error) {
+func (db *PostgresSQL) EventsTx(ctx context.Context, etxFn db.EventsTxFn) (eventIds []events.EventID, err error) {
 	if db.outbox == nil {
 		return nil, ErrNoOutboxConfigured
 	}

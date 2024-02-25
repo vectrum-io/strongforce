@@ -11,8 +11,15 @@ services:
       MYSQL_ROOT_PASSWORD: 'strongforce'
     ports:
       - '64001:3306'
-    expose:
-      - '64001'
+  postgres:
+    image: postgres:12.18
+    restart: always
+    environment:
+      POSTGRES_PASSWORD: strongforce
+      POSTGRES_USER: strongforce
+      POSTGRES_DB: strongforce
+    ports:
+      - '64003:5432'
   nats:
     image: nats:2.10
     ports:

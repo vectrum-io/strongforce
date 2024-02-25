@@ -6,7 +6,9 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/vectrum-io/strongforce/pkg/bus"
+	"github.com/vectrum-io/strongforce/pkg/db"
 	"github.com/vectrum-io/strongforce/pkg/db/mysql"
+	"github.com/vectrum-io/strongforce/pkg/db/postgres"
 	"github.com/vectrum-io/strongforce/pkg/forwarder"
 	"github.com/vectrum-io/strongforce/pkg/serialization"
 	"github.com/vectrum-io/strongforce/tests/mocks"
@@ -21,6 +23,11 @@ var (
 		Subject: "test",
 		Data:    []byte{69, 42, 0},
 	}
+	expectedOutboundMessageTwoOk = bus.OutboundMessage{
+		Id:      "test-event-2",
+		Subject: "test",
+		Data:    []byte{69, 42, 0},
+	}
 	expectedOutboundMessageFail = bus.OutboundMessage{
 		Id:      "test-event-fail",
 		Subject: "test",
@@ -28,17 +35,56 @@ var (
 	}
 )
 
-func TestForward(t *testing.T) {
+func TestForwardMySQL(t *testing.T) {
 	mockBus := &mocks.Bus{}
 	tableName := "event_outbox_fw_1"
 
 	db, err := mysql.New(mysql.Options{
-		DSN: sharedtest.DSN,
+		DSN: sharedtest.MySQLDSN,
 	})
 	assert.NoError(t, err)
 
-	assert.NoError(t, db.Connect())
+	testForward(t, mockBus, db, tableName)
+}
 
+func TestForwardFailedMySQL(t *testing.T) {
+	mockBus := &mocks.Bus{}
+	tableName := "event_outbox_fw_2"
+
+	db, err := mysql.New(mysql.Options{
+		DSN: sharedtest.MySQLDSN,
+	})
+	assert.NoError(t, err)
+
+	testForwardFailed(t, mockBus, db, tableName)
+}
+
+func TestForwardPostgres(t *testing.T) {
+	mockBus := &mocks.Bus{}
+	tableName := "event_outbox_fw_1"
+
+	db, err := postgres.New(postgres.Options{
+		DSN: sharedtest.PostgresDSN,
+	})
+	assert.NoError(t, err)
+
+	testForward(t, mockBus, db, tableName)
+}
+
+func TestForwardFailedPostgres(t *testing.T) {
+	mockBus := &mocks.Bus{}
+	tableName := "event_outbox_fw_2"
+
+	db, err := postgres.New(postgres.Options{
+		DSN: sharedtest.PostgresDSN,
+	})
+	assert.NoError(t, err)
+
+	testForwardFailed(t, mockBus, db, tableName)
+}
+
+func testForward(t *testing.T, mockBus *mocks.Bus, db db.DB, tableName string) {
+	assert.NoError(t, db.Connect())
 	assert.NoError(t, sharedtest.CreateOutboxTable(db, tableName))
 
 	fw, err := forwarder.New(db, mockBus, &forwarder.Options{
@@ -53,13 +99,20 @@ func TestForward(t *testing.T) {
 	}()
 
 	mockBus.On("Publish", expectedOutboundMessageOk).Return(nil).Once()
+	mockBus.On("Publish", expectedOutboundMessageTwoOk).Return(nil).Once()
 
-	// insert event into outbox
+	// insert first event into outbox
 	//goland:noinspection ALL
-	_, err = db.Connection().Exec(
+	_, err = db.Connection().Exec(db.Connection().Rebind(
 		fmt.Sprintf("INSERT INTO %s (id, topic, payload, created_at) VALUES (?, ?, ?, ?)", tableName),
-		"test-event", "test", []byte{69, 42, 0}, time.Now(),
-	)
+	), "test-event", "test", []byte{69, 42, 0}, time.Now())
+	assert.NoError(t, err)
+
+	// insert second event into outbox
+	//goland:noinspection ALL
+	_, err = db.Connection().Exec(db.Connection().Rebind(
+		fmt.Sprintf("INSERT INTO %s (id, topic, payload, created_at) VALUES (?, ?, ?, ?)", tableName),
+	), "test-event-2", "test", []byte{69, 42, 0}, time.Now())
 	assert.NoError(t, err)
 
 	time.Sleep(150 * time.Millisecond)
@@ -74,14 +127,7 @@ func TestForward(t *testing.T) {
 	assert.NoError(t, db.Close())
 }
 
-func TestForwardFailed(t *testing.T) {
-	mockBus := &mocks.Bus{}
-	tableName := "event_outbox_fw_2"
-
-	db, err := mysql.New(mysql.Options{
-		DSN: sharedtest.DSN,
-	})
-	assert.NoError(t, err)
+func testForwardFailed(t *testing.T, mockBus *mocks.Bus, db db.DB, tableName string) {
 	assert.NoError(t, db.Connect())
 	assert.NoError(t, sharedtest.CreateOutboxTable(db, tableName))
 
@@ -102,7 +148,7 @@ func TestForwardFailed(t *testing.T) {
 	// insert one good and one failed event into db
 	//goland:noinspection ALL
 	_, err = db.Connection().Exec(
-		fmt.Sprintf("INSERT INTO %s (id, topic, payload, created_at) VALUES (?, ?, ?, ?), (?, ?, ?, ?)", tableName),
+		db.Connection().Rebind(fmt.Sprintf("INSERT INTO %s (id, topic, payload, created_at) VALUES (?, ?, ?, ?), (?, ?, ?, ?)", tableName)),
 		"test-event-fail", "test", []byte{69, 42, 0}, time.Now(),
 		"test-event", "test", []byte{69, 42, 0}, time.Now(),
 	)

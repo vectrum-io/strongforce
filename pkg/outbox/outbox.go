@@ -2,8 +2,8 @@ package outbox
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
+	"github.com/jmoiron/sqlx"
 	"github.com/vectrum-io/strongforce/pkg/events"
 	"github.com/vectrum-io/strongforce/pkg/serialization"
 )
@@ -24,7 +24,7 @@ func New(options *Options) (*Outbox, error) {
 	}, nil
 }
 
-func (o *Outbox) EmitEvent(ctx context.Context, tx *sql.Tx, event *events.EventSpec) (*events.EventID, error) {
+func (o *Outbox) EmitEvent(ctx context.Context, tx *sqlx.Tx, event *events.EventSpec) (*events.EventID, error) {
 	serializedEvent, err := o.serializer.Serialize(event.Payload)
 	if err != nil {
 		return nil, fmt.Errorf("failed to serialize event: %w", err)
@@ -32,9 +32,9 @@ func (o *Outbox) EmitEvent(ctx context.Context, tx *sql.Tx, event *events.EventS
 
 	metadata := event.Metadata
 
-	query := fmt.Sprintf(`
+	query := tx.Rebind(fmt.Sprintf(`
 		INSERT INTO %s (id, topic, payload) VALUES (?, ?, ?)
-	`, o.tableName)
+	`, o.tableName))
 
 	_, err = tx.ExecContext(ctx, query, metadata.Id.String(), metadata.Topic, serializedEvent)
 	if err != nil {
