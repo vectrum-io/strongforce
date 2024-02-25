@@ -25,7 +25,7 @@ table "event_outbox" {
 table "test" {
   schema = schema.strongforce
   column "id" {
-    type           = serial
+    type = serial
   }
   column "value" {
     null = false
