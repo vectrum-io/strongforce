@@ -35,9 +35,8 @@ func main() {
 func setupTracing() (*sdktrace.TracerProvider, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
-	conn, err := grpc.DialContext(ctx, "127.0.0.1:32317",
+	conn, err := grpc.NewClient("127.0.0.1:32317",
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
-		grpc.WithBlock(),
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create gRPC connection to collector: %w", err)
