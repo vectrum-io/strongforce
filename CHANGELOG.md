@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.11.0](https://github.com/vectrum-io/strongforce/compare/v0.10.0...v0.11.0) (2024-05-21)
+
+
+### Features
+
+* update golang to 1.22 ([fe6d927](https://github.com/vectrum-io/strongforce/commit/fe6d9271d9000af77ee57071897f88c9f7bd57a5))
+* update golang to 1.22 ([e6ef394](https://github.com/vectrum-io/strongforce/commit/e6ef39478729a8cb69d83634f191667467e7eadb))
+
 ## [0.10.0](https://github.com/vectrum-io/strongforce/compare/v0.9.0...v0.10.0) (2024-02-25)
 
 
