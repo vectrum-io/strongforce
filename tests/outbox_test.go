@@ -84,12 +84,16 @@ func TestOutbox(t *testing.T) {
 			tableName := fmt.Sprintf("event_outbox_ob_1_%d", i)
 
 			t.Run(testCase.name, func(t *testing.T) {
+				t.Logf("Running test case: %s", testCase.name)
 				db, err := createDB(driver, tableName, testCase.serializer)
 				assert.NoError(t, err)
+				t.Logf("Connecting to %s database", driver)
 				assert.NoError(t, db.Connect())
+				t.Logf("Creating outbox table: %s", tableName)
 				assert.NoError(t, sharedtest.CreateOutboxTable(db, tableName))
 
 				// run test cases
+				t.Logf("creating event with payload: %v", testCase.payload)
 				eventId, err := db.EventTx(context.Background(), func(ctx context.Context, tx *sqlx.Tx) (*events.EventSpec, error) {
 					return eventBuilder.New("test", testCase.payload)
 				})

@@ -12,6 +12,7 @@ type Atlas struct {
 	atlasBinaryPath string
 	atlasBinaryName string
 	baseline        string
+	allowDirty      bool
 }
 
 type AtlasOptions struct {
@@ -19,6 +20,7 @@ type AtlasOptions struct {
 	AtlasBinaryPath string
 	AtlasBinaryName string
 	BaselineVersion string
+	AllowDirty      bool
 }
 
 func NewAtlasMigrator(options *AtlasOptions) *Atlas {
@@ -31,6 +33,7 @@ func NewAtlasMigrator(options *AtlasOptions) *Atlas {
 		atlasBinaryPath: options.AtlasBinaryPath,
 		atlasBinaryName: options.AtlasBinaryName,
 		baseline:        options.BaselineVersion,
+		allowDirty:      options.AllowDirty,
 	}
 }
 
@@ -44,6 +47,7 @@ func (a *Atlas) Migrate(ctx context.Context, dsn string) (*db.MigrationResult, e
 		URL:             dsn,
 		DirURL:          fmt.Sprintf("file://%s", a.migrationDir),
 		BaselineVersion: a.baseline,
+		AllowDirty:      a.allowDirty,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to apply migrations: %w", err)
