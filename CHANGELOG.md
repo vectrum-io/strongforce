@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.12.0](https://github.com/vectrum-io/strongforce/compare/v0.11.0...v0.12.0) (2024-05-22)
+
+
+### Features
+
+* allow specifying the atlas revision schema ([1a3a110](https://github.com/vectrum-io/strongforce/commit/1a3a110f52623d57ddbfd494d1e795c9e438ba14))
+
 ## [0.11.0](https://github.com/vectrum-io/strongforce/compare/v0.10.0...v0.11.0) (2024-05-21)
 
 
