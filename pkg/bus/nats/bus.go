@@ -93,6 +93,7 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		FilterSubjects:  subscriptionOptions.FilterSubjects,
 		MaxDeliverTries: subscriptionOptions.MaxDeliveryTries,
 		MaxAckPending:   maxAckPending,
+		Deserializer:    subscriptionOptions.Deserializer,
 	})
 	if err != nil {
 		return nil, err
