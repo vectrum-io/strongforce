@@ -6,6 +6,7 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
 	"github.com/uptrace/opentelemetry-go-extra/otelsql"
+	"github.com/uptrace/opentelemetry-go-extra/otelsqlx"
 	"github.com/vectrum-io/strongforce/pkg/db"
 	"github.com/vectrum-io/strongforce/pkg/outbox"
 	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
@@ -13,11 +14,12 @@ import (
 )
 
 type MySQL struct {
-	conn     *sqlx.DB
-	migrator db.Migrator
-	config   *mysql.Config
-	outbox   *outbox.Outbox
-	logger   *zap.Logger
+	conn              *sqlx.DB
+	migrator          db.Migrator
+	config            *mysql.Config
+	connectionOptions *ConnectionOptions
+	outbox            *outbox.Outbox
+	logger            *zap.Logger
 }
 
 func New(options Options) (*MySQL, error) {
@@ -36,20 +38,26 @@ func New(options Options) (*MySQL, error) {
 	}
 
 	return &MySQL{
-		config:   cfg,
-		migrator: options.Migrator,
-		outbox:   ob,
-		logger:   options.Logger,
+		config:            cfg,
+		migrator:          options.Migrator,
+		outbox:            ob,
+		logger:            options.Logger,
+		connectionOptions: options.ConnectionOptions,
 	}, nil
 }
 
 func (db *MySQL) Connect() error {
-	connection, err := otelsql.Open("mysql", db.config.FormatDSN(), otelsql.WithAttributes(semconv.DBSystemMySQL), otelsql.WithDBName(db.config.DBName))
+	connection, err := otelsqlx.Open("mysql", db.config.FormatDSN(), otelsql.WithAttributes(semconv.DBSystemMySQL), otelsql.WithDBName(db.config.DBName))
 	if err != nil {
 		return err
 	}
 
-	db.conn = sqlx.NewDb(connection, "mysql")
+	connection.SetConnMaxLifetime(db.connectionOptions.ConnMaxLifetime)
+	connection.SetMaxIdleConns(db.connectionOptions.MaxIdleCons)
+	connection.SetMaxOpenConns(db.connectionOptions.MaxOpenCons)
+	connection.SetConnMaxIdleTime(db.connectionOptions.ConnMaxIdleTime)
+
+	db.conn = connection
 	return nil
 }
 

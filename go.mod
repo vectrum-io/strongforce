@@ -11,7 +11,8 @@ require (
 	github.com/nats-io/nats.go v1.35.0
 	github.com/oklog/ulid/v2 v2.1.0
 	github.com/stretchr/testify v1.9.0
-	github.com/uptrace/opentelemetry-go-extra/otelsql v0.2.4
+	github.com/uptrace/opentelemetry-go-extra/otelsql v0.3.1
+	github.com/uptrace/opentelemetry-go-extra/otelsqlx v0.3.1
 	go.opentelemetry.io/otel v1.27.0
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.27.0
 	go.opentelemetry.io/otel/sdk v1.27.0
