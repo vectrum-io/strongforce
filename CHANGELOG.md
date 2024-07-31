@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.13.0](https://github.com/vectrum-io/strongforce/compare/v0.12.0...v0.13.0) (2024-07-31)
+
+
+### Features
+
+* implement connection options to configure pooling for mysql ([5130255](https://github.com/vectrum-io/strongforce/commit/5130255ad8959b083ea92f1bbd1bdd36021e97e6))
+
+
+### Bug Fixes
+
+* propagate deserializer options to subscription ([6b610d2](https://github.com/vectrum-io/strongforce/commit/6b610d2411f83375ef587be9b13abf1d9a95b3d7))
+
 ## [0.12.0](https://github.com/vectrum-io/strongforce/compare/v0.11.0...v0.12.0) (2024-05-22)
 
 
