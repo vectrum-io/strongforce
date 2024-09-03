@@ -53,6 +53,7 @@ func (fw *DBForwarder) Start(ctx context.Context) error {
 	query := fmt.Sprintf(`
 		SELECT id, topic, payload, created_at
 		FROM %s
+		FOR UPDATE
 	`, fw.outboxTableName)
 
 	ticker := time.NewTicker(fw.pollingInterval)
@@ -71,50 +72,53 @@ func (fw *DBForwarder) Start(ctx context.Context) error {
 
 func (fw *DBForwarder) processEvents(ctx context.Context, query string) error {
 	var eventRows []*outbox.EventEntity
-	err := fw.db.Connection().SelectContext(ctx, &eventRows, query)
-	if err != nil {
-		return err
-	}
 
-	if len(eventRows) == 0 {
-		return nil
-	}
-
-	var publishedIds []events.EventID
-
-	for _, row := range eventRows {
-		event, err := row.ToSerializedEvent()
+	return fw.db.Tx(ctx, func(ctx context.Context, tx *sqlx.Tx) error {
+		err := tx.SelectContext(ctx, &eventRows, query)
 		if err != nil {
-			fw.logger.Error("failed to convert db entity to event spec: " + err.Error())
-			continue
+			return err
 		}
 
-		if err := fw.emitEvent(ctx, event); err != nil {
-			fw.logger.Warn("failed to publish event: " + err.Error())
-			continue
+		if len(eventRows) == 0 {
+			return nil
 		}
 
-		publishedIds = append(publishedIds, event.Metadata.Id)
-	}
+		var publishedIds []events.EventID
 
-	if len(publishedIds) == 0 {
+		for _, row := range eventRows {
+			event, err := row.ToSerializedEvent()
+			if err != nil {
+				fw.logger.Error("failed to convert db entity to event spec: " + err.Error())
+				continue
+			}
+
+			if err := fw.emitEvent(ctx, event); err != nil {
+				fw.logger.Warn("failed to publish event: " + err.Error())
+				continue
+			}
+
+			publishedIds = append(publishedIds, event.Metadata.Id)
+		}
+
+		if len(publishedIds) == 0 {
+			return nil
+		}
+
+		// remove published events
+		queryString := fmt.Sprintf("DELETE FROM %s WHERE id IN (?)", fw.outboxTableName)
+		query, args, err := sqlx.In(queryString, publishedIds)
+		if err != nil {
+			return fmt.Errorf("failed to construct deletion query: %w", err)
+		}
+
+		query = tx.Rebind(query)
+		_, err = tx.ExecContext(ctx, query, args...)
+		if err != nil {
+			return fmt.Errorf("failed to delete published events: %w", err)
+		}
+
 		return nil
-	}
-
-	// remove published events
-	queryString := fmt.Sprintf("DELETE FROM %s WHERE id IN (?)", fw.outboxTableName)
-	query, args, err := sqlx.In(queryString, publishedIds)
-	if err != nil {
-		return fmt.Errorf("failed to construct deletion query: %w", err)
-	}
-
-	query = fw.db.Connection().Rebind(query)
-	_, err = fw.db.Connection().ExecContext(ctx, query, args...)
-	if err != nil {
-		return fmt.Errorf("failed to delete published events: %w", err)
-	}
-
-	return nil
+	})
 }
 
 func (fw *DBForwarder) emitEvent(ctx context.Context, event *events.SerializedEvent) error {
