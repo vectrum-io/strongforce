@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.13.1](https://github.com/vectrum-io/strongforce/compare/v0.13.0...v0.13.1) (2024-09-03)
+
+
+### Bug Fixes
+
+* add row locking for event forwarder ([3891461](https://github.com/vectrum-io/strongforce/commit/38914613c28b864eb18bd98a04c0e045edd9a333))
+
 ## [0.13.0](https://github.com/vectrum-io/strongforce/compare/v0.12.0...v0.13.0) (2024-07-31)
 
 
