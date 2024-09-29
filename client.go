@@ -6,6 +6,7 @@ import (
 	"github.com/vectrum-io/strongforce/pkg/db"
 	"github.com/vectrum-io/strongforce/pkg/events"
 	"github.com/vectrum-io/strongforce/pkg/forwarder"
+	"github.com/vectrum-io/strongforce/pkg/testhelper"
 	"go.uber.org/zap"
 )
 
@@ -58,4 +59,11 @@ func (sf *Client) Bus() bus.Bus {
 
 func (sf *Client) EventBuilder() *events.Builder {
 	return sf.eventBuilder
+}
+
+func (sf *Client) TestHelper() *testhelper.TestHelper {
+	return &testhelper.TestHelper{
+		DB:  sf.db,
+		Bus: sf.bus,
+	}
 }
