@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.14.0](https://github.com/vectrum-io/strongforce/compare/v0.13.1...v0.14.0) (2024-09-29)
+
+
+### Features
+
+* adds testhelpers ([34a9e90](https://github.com/vectrum-io/strongforce/commit/34a9e909324d2c525d42efda16594659b615aba2))
+
 ## [0.13.1](https://github.com/vectrum-io/strongforce/compare/v0.13.0...v0.13.1) (2024-09-03)
 
 
