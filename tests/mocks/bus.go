@@ -29,3 +29,8 @@ func (b *Bus) Migrate(ctx context.Context) error {
 	args := b.Called()
 	return args.Error(0)
 }
+
+func (b *Bus) SubscriberInfo(ctx context.Context, stream string, consumerName string) (bus.SubscriberInfo, error) {
+	args := b.Called(stream, consumerName)
+	return args.Get(0).(bus.SubscriberInfo), args.Error(1)
+}

@@ -26,7 +26,6 @@ type Options struct {
 }
 
 func New(options *Options) (*Bus, error) {
-
 	if options.Logger == nil {
 		options.Logger = zap.L()
 	}
@@ -136,4 +135,20 @@ func (b *Bus) Migrate(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func (b *Bus) SubscriberInfo(ctx context.Context, stream string, consumerName string) (bus.SubscriberInfo, error) {
+	consumer, err := b.subscriber.jetStream.Consumer(ctx, stream, consumerName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get consumer: %w", err)
+	}
+
+	consumerInfo, err := consumer.Info(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get consumer info: %w", err)
+	}
+
+	return &SubscriberInfo{
+		jsConsumerInfo: consumerInfo,
+	}, nil
 }

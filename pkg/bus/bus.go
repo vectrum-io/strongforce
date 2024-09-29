@@ -13,6 +13,12 @@ type Bus interface {
 	Subscribe(ctx context.Context, subscriberName string, stream string, opts ...SubscribeOption) (*Subscription, error)
 	// Migrate ensures that dependencies (streams, topic, consumers, etc.) are up to date and ready to be used
 	Migrate(ctx context.Context) error
+	// SubscriberInfo retrieves information about a subscriber in a stream
+	SubscriberInfo(ctx context.Context, stream string, subscriberName string) (SubscriberInfo, error)
+}
+
+type SubscriberInfo interface {
+	HasPendingMessages() bool
 }
 
 type OutboundMessage struct {
