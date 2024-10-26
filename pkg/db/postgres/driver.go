@@ -13,11 +13,12 @@ import (
 )
 
 type PostgresSQL struct {
-	conn     *sqlx.DB
-	migrator db.Migrator
-	dsn      string
-	outbox   *outbox.Outbox
-	logger   *zap.Logger
+	conn              *sqlx.DB
+	migrator          db.Migrator
+	dsn               string
+	outbox            *outbox.Outbox
+	logger            *zap.Logger
+	connectionOptions *ConnectionOptions
 }
 
 func New(options Options) (*PostgresSQL, error) {
@@ -31,10 +32,11 @@ func New(options Options) (*PostgresSQL, error) {
 	}
 
 	return &PostgresSQL{
-		dsn:      options.DSN,
-		migrator: options.Migrator,
-		outbox:   ob,
-		logger:   options.Logger,
+		dsn:               options.DSN,
+		migrator:          options.Migrator,
+		outbox:            ob,
+		logger:            options.Logger,
+		connectionOptions: options.ConnectionOptions,
 	}, nil
 }
 
@@ -43,6 +45,12 @@ func (db *PostgresSQL) Connect() error {
 	if err != nil {
 		return err
 	}
+
+	connection.SetConnMaxLifetime(db.connectionOptions.ConnMaxLifetime)
+	connection.SetMaxIdleConns(db.connectionOptions.MaxIdleCons)
+	connection.SetMaxOpenConns(db.connectionOptions.MaxOpenCons)
+	connection.SetConnMaxIdleTime(db.connectionOptions.ConnMaxIdleTime)
+
 	db.conn = sqlx.NewDb(connection, "postgres")
 
 	return nil
