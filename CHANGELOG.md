@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.15.0](https://github.com/vectrum-io/strongforce/compare/v0.14.0...v0.15.0) (2024-10-26)
+
+
+### Features
+
+* adds connection options for postgresql driver ([ddeebc4](https://github.com/vectrum-io/strongforce/commit/ddeebc44cfa0caa062cbf073a9d386a09fe7cd27))
+
 ## [0.14.0](https://github.com/vectrum-io/strongforce/compare/v0.13.1...v0.14.0) (2024-09-29)
 
 
