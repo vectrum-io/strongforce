@@ -17,11 +17,12 @@ var (
 )
 
 type clientOptions struct {
-	mysqlOptions     *mysql.Options
-	postgresOptions  *postgres.Options
-	forwarderOptions *forwarder.Options
-	natsOptions      *nats.Options
-	logger           *zap.Logger
+	mysqlOptions             *mysql.Options
+	postgresOptions          *postgres.Options
+	forwarderOptions         *forwarder.Options
+	debeziumForwarderOptions *forwarder.DebeziumOptions
+	natsOptions              *nats.Options
+	logger                   *zap.Logger
 }
 
 type Option func(o *clientOptions)
@@ -53,6 +54,12 @@ func WithPostgres(options *postgres.Options) Option {
 func WithForwarder(options *forwarder.Options) Option {
 	return func(o *clientOptions) {
 		o.forwarderOptions = options
+	}
+}
+
+func WithDebeziumForwarder(options *forwarder.DebeziumOptions) Option {
+	return func(o *clientOptions) {
+		o.debeziumForwarderOptions = options
 	}
 }
 
@@ -97,6 +104,22 @@ func (co *clientOptions) CreateClient() (*Client, error) {
 		fw, err := forwarder.New(client.db, client.bus, co.forwarderOptions)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create forwarder: %w", err)
+		}
+		client.forwarder = fw
+	}
+
+	if co.debeziumForwarderOptions != nil {
+		if client.db == nil {
+			return nil, fmt.Errorf("cannot create forwarder: %w", ErrNoDB)
+		}
+
+		if co.natsOptions == nil {
+			return nil, fmt.Errorf("cannot create forwarder: %w", ErrNoBus)
+		}
+
+		fw, err := forwarder.NewDebeziumForwarder(client.db, client.bus, co.debeziumForwarderOptions)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create debezium forwarder: %w", err)
 		}
 		client.forwarder = fw
 	}

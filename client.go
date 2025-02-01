@@ -13,7 +13,7 @@ import (
 type Client struct {
 	db           db.DB
 	eventBuilder *events.Builder
-	forwarder    *forwarder.DBForwarder
+	forwarder    forwarder.Forwarder
 	bus          bus.Bus
 }
 
