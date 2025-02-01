@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.0](https://github.com/vectrum-io/strongforce/compare/v0.15.0...v0.16.0) (2025-02-01)
+
+
+### Features
+
+* adds debezium forwarder ([9e7fdf6](https://github.com/vectrum-io/strongforce/commit/9e7fdf6efeb79c1093bb96048384a4ecbb67ad17))
+
 ## [0.15.0](https://github.com/vectrum-io/strongforce/compare/v0.14.0...v0.15.0) (2024-10-26)
 
 
