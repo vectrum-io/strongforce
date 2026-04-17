@@ -7,6 +7,7 @@ const DefaultOutboxTableName = "event_outbox"
 type Options struct {
 	TableName  string
 	Serializer serialization.Serializer
+	Notifier   CommitNotifier
 }
 
 func (o *Options) validate() error {

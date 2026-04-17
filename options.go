@@ -3,13 +3,22 @@ package strongforce
 import (
 	"errors"
 	"fmt"
+
 	"github.com/vectrum-io/strongforce/pkg/bus/nats"
 	"github.com/vectrum-io/strongforce/pkg/db/mysql"
 	"github.com/vectrum-io/strongforce/pkg/db/postgres"
 	"github.com/vectrum-io/strongforce/pkg/events"
 	"github.com/vectrum-io/strongforce/pkg/forwarder"
+	"github.com/vectrum-io/strongforce/pkg/outbox"
 	"go.uber.org/zap"
 )
+
+// outboxProvider is implemented by db backends that expose their outbox for
+// CommitNotifier wiring. Using a narrow interface here keeps db.DB free of
+// outbox concerns for users that don't use the forwarder.
+type outboxProvider interface {
+	Outbox() *outbox.Outbox
+}
 
 var (
 	ErrNoDB  = errors.New("no database configured")
@@ -106,6 +115,14 @@ func (co *clientOptions) CreateClient() (*Client, error) {
 			return nil, fmt.Errorf("failed to create forwarder: %w", err)
 		}
 		client.forwarder = fw
+
+		if co.forwarderOptions.DirectEmit {
+			op, ok := client.db.(outboxProvider)
+			if !ok || op.Outbox() == nil {
+				return nil, fmt.Errorf("cannot enable direct emit: db does not expose an outbox")
+			}
+			op.Outbox().SetNotifier(fw)
+		}
 	}
 
 	if co.debeziumForwarderOptions != nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+
 	"github.com/vectrum-io/strongforce/pkg/db"
 	"github.com/vectrum-io/strongforce/pkg/events"
 )
@@ -13,6 +14,8 @@ var (
 )
 
 // EventTx is a convenience method for emitting a single event in a single transaction.
+// On successful commit, the event is handed to the outbox's CommitNotifier (if any)
+// so downstream consumers can publish it directly without re-querying the outbox.
 func (db *PostgresSQL) EventTx(ctx context.Context, etxFn db.EventTxFn) (eventId *events.EventID, err error) {
 	if db.outbox == nil {
 		return nil, ErrNoOutboxConfigured
@@ -23,7 +26,6 @@ func (db *PostgresSQL) EventTx(ctx context.Context, etxFn db.EventTxFn) (eventId
 		return nil, err
 	}
 
-	// commit or rollback
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic occurred: %+v", p)
@@ -34,20 +36,32 @@ func (db *PostgresSQL) EventTx(ctx context.Context, etxFn db.EventTxFn) (eventId
 			if rbError := tx.Rollback(); rbError != nil {
 				err = errors.Join(err, rbError)
 			}
-		} else {
-			err = tx.Commit()
 		}
 	}()
 
 	event, txErr := etxFn(ctx, tx)
 	if txErr != nil {
+		err = txErr
 		return nil, txErr
 	}
 
-	return db.outbox.EmitEvent(ctx, tx, event)
+	serialized, err := db.outbox.EmitEvent(ctx, tx, event)
+	if err != nil {
+		return nil, err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	db.outbox.NotifyCommitted(ctx, []*events.SerializedEvent{serialized})
+
+	id := serialized.Metadata.Id
+	return &id, nil
 }
 
 // EventsTx is a convenience method for emitting multiple events in a single transaction.
+// On successful commit, all events are handed to the outbox's CommitNotifier (if any).
 func (db *PostgresSQL) EventsTx(ctx context.Context, etxFn db.EventsTxFn) (eventIds []events.EventID, err error) {
 	if db.outbox == nil {
 		return nil, ErrNoOutboxConfigured
@@ -58,7 +72,6 @@ func (db *PostgresSQL) EventsTx(ctx context.Context, etxFn db.EventsTxFn) (event
 		return nil, err
 	}
 
-	// commit or rollback
 	defer func() {
 		if p := recover(); p != nil {
 			err = fmt.Errorf("panic occurred: %+v", p)
@@ -69,23 +82,34 @@ func (db *PostgresSQL) EventsTx(ctx context.Context, etxFn db.EventsTxFn) (event
 			if rbError := tx.Rollback(); rbError != nil {
 				err = errors.Join(err, rbError)
 			}
-		} else {
-			err = tx.Commit()
 		}
 	}()
 
 	eventSpecs, txErr := etxFn(ctx, tx)
 	if txErr != nil {
+		err = txErr
 		return nil, txErr
 	}
 
+	serializedEvents := make([]*events.SerializedEvent, 0, len(eventSpecs))
 	for _, spec := range eventSpecs {
-		eventId, err := db.outbox.EmitEvent(ctx, tx, spec)
-		if err != nil {
-			return nil, err
+		serialized, emitErr := db.outbox.EmitEvent(ctx, tx, spec)
+		if emitErr != nil {
+			err = emitErr
+			return nil, emitErr
 		}
-		eventIds = append(eventIds, *eventId)
+		serializedEvents = append(serializedEvents, serialized)
 	}
 
-	return
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+
+	db.outbox.NotifyCommitted(ctx, serializedEvents)
+
+	eventIds = make([]events.EventID, 0, len(serializedEvents))
+	for _, s := range serializedEvents {
+		eventIds = append(eventIds, s.Metadata.Id)
+	}
+	return eventIds, nil
 }

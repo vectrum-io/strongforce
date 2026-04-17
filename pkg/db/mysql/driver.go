@@ -69,6 +69,12 @@ func (db *MySQL) Connection() *sqlx.DB {
 	return db.conn
 }
 
+// Outbox returns the underlying outbox so client wiring code can attach a
+// CommitNotifier. Returns nil if no outbox is configured.
+func (db *MySQL) Outbox() *outbox.Outbox {
+	return db.outbox
+}
+
 func (db *MySQL) Migrate(ctx context.Context, options *db.MigrationOptions) (*db.MigrationResult, error) {
 	if db.migrator == nil {
 		return nil, ErrNoMigrator

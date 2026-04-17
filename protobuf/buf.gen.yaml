@@ -1,12 +1,14 @@
-version: v1
+version: v2
+clean: true
 managed:
   enabled: true
-  go_package_prefix:
-    default: github.com/vectrum-io/strongforce/protobuf/gen
+  override:
+    - file_option: go_package_prefix
+      value: github.com/vectrum-io/vops/core/protobuf/gen
 plugins:
-  - plugin: buf.build/protocolbuffers/go
+  - local: protoc-gen-go
     out: gen
     opt: paths=source_relative
-  - plugin: buf.build/bufbuild/connect-go
+  - local: protoc-gen-connect-go
     out: gen
     opt: paths=source_relative
