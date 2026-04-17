@@ -34,7 +34,7 @@ type Options struct {
 	OutboxDepthSampleEvery int
 
 	// Metrics is optional. When nil the forwarder records nothing. Construct
-	// with NewMetrics(reg) to attach to a Prometheus registerer.
+	// with NewMetrics(mp) to attach to an OpenTelemetry MeterProvider.
 	Metrics *Metrics
 }
 
