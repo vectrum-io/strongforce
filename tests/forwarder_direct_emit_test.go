@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/jmoiron/sqlx"
-	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"github.com/vectrum-io/strongforce/pkg/db"
 	"github.com/vectrum-io/strongforce/pkg/db/mysql"
@@ -24,11 +24,40 @@ import (
 	sharedtest "github.com/vectrum-io/strongforce/tests/shared"
 )
 
-func newTestMetrics(t *testing.T) *forwarder.Metrics {
+// newTestMetrics wires the forwarder's OTel Metrics against a ManualReader so
+// tests can introspect counter/histogram values synchronously.
+func newTestMetrics(t *testing.T) (*forwarder.Metrics, *sdkmetric.ManualReader) {
 	t.Helper()
-	m, err := forwarder.NewMetrics(prometheus.NewRegistry())
+	reader := sdkmetric.NewManualReader()
+	mp := sdkmetric.NewMeterProvider(sdkmetric.WithReader(reader))
+	m, err := forwarder.NewMetrics(mp)
 	assert.NoError(t, err)
-	return m
+	return m, reader
+}
+
+// readCounter collects the current value of an Int64 sum metric by name.
+// Returns 0 if the metric has not been recorded yet.
+func readCounter(t *testing.T, reader *sdkmetric.ManualReader, name string) int64 {
+	t.Helper()
+	var rm metricdata.ResourceMetrics
+	assert.NoError(t, reader.Collect(context.Background(), &rm))
+	for _, sm := range rm.ScopeMetrics {
+		for _, m := range sm.Metrics {
+			if m.Name != name {
+				continue
+			}
+			sum, ok := m.Data.(metricdata.Sum[int64])
+			if !ok {
+				t.Fatalf("metric %q is not an int64 Sum (got %T)", name, m.Data)
+			}
+			var total int64
+			for _, dp := range sum.DataPoints {
+				total += dp.Value
+			}
+			return total
+		}
+	}
+	return 0
 }
 
 type outboxProvider interface {
@@ -95,7 +124,7 @@ func testDirectEmitHappyPath(t *testing.T, driver, tableName string) {
 	assert.NoError(t, sharedtest.CreateOutboxTable(d, tableName))
 	defer d.Close()
 
-	metrics := newTestMetrics(t)
+	metrics, reader := newTestMetrics(t)
 
 	fw, err := forwarder.New(d, mockBus, &forwarder.Options{
 		PollingInterval: 10 * time.Second, // effectively disables poller
@@ -130,9 +159,9 @@ func testDirectEmitHappyPath(t *testing.T, driver, tableName string) {
 	// is plenty. Poll the outbox until empty.
 	assertOutboxEmpty(t, d, tableName, 2*time.Second)
 
-	assert.Equal(t, float64(1), testutil.ToFloat64(metrics.DirectEnqueued))
-	assert.Equal(t, float64(1), testutil.ToFloat64(metrics.DirectPublished))
-	assert.Equal(t, float64(0), testutil.ToFloat64(metrics.DirectFailed))
+	assert.Equal(t, int64(1), readCounter(t, reader, "strongforce.forwarder.direct.enqueued"))
+	assert.Equal(t, int64(1), readCounter(t, reader, "strongforce.forwarder.direct.published"))
+	assert.Equal(t, int64(0), readCounter(t, reader, "strongforce.forwarder.direct.failed"))
 	mockBus.AssertExpectations(t)
 }
 
@@ -151,7 +180,7 @@ func testDirectEmitBatch(t *testing.T, driver, tableName string) {
 	assert.NoError(t, sharedtest.CreateOutboxTable(d, tableName))
 	defer d.Close()
 
-	metrics := newTestMetrics(t)
+	metrics, reader := newTestMetrics(t)
 	fw, err := forwarder.New(d, mockBus, &forwarder.Options{
 		PollingInterval: 10 * time.Second,
 		Serializer:      serialization.NewJSONSerializer(),
@@ -184,8 +213,8 @@ func testDirectEmitBatch(t *testing.T, driver, tableName string) {
 	assert.NoError(t, err)
 
 	assertOutboxEmpty(t, d, tableName, 2*time.Second)
-	assert.Equal(t, float64(5), testutil.ToFloat64(metrics.DirectEnqueued))
-	assert.Equal(t, float64(5), testutil.ToFloat64(metrics.DirectPublished))
+	assert.Equal(t, int64(5), readCounter(t, reader, "strongforce.forwarder.direct.enqueued"))
+	assert.Equal(t, int64(5), readCounter(t, reader, "strongforce.forwarder.direct.published"))
 	mockBus.AssertExpectations(t)
 }
 
@@ -206,7 +235,7 @@ func testDirectEmitFallbackOnBusError(t *testing.T, driver, tableName string) {
 	assert.NoError(t, sharedtest.CreateOutboxTable(d, tableName))
 	defer d.Close()
 
-	metrics := newTestMetrics(t)
+	metrics, reader := newTestMetrics(t)
 	fw, err := forwarder.New(d, mockBus, &forwarder.Options{
 		PollingInterval: 100 * time.Millisecond,
 		Serializer:      serialization.NewJSONSerializer(),
@@ -233,8 +262,8 @@ func testDirectEmitFallbackOnBusError(t *testing.T, driver, tableName string) {
 	assert.NoError(t, err)
 
 	assertOutboxEmpty(t, d, tableName, 2*time.Second)
-	assert.Equal(t, float64(1), testutil.ToFloat64(metrics.DirectFailed))
-	assert.GreaterOrEqual(t, testutil.ToFloat64(metrics.PollerPublished), float64(1))
+	assert.Equal(t, int64(1), readCounter(t, reader, "strongforce.forwarder.direct.failed"))
+	assert.GreaterOrEqual(t, readCounter(t, reader, "strongforce.forwarder.poller.published"), int64(1))
 	mockBus.AssertExpectations(t)
 }
 
@@ -256,7 +285,7 @@ func testDirectEmitDroppedGoesToPoller(t *testing.T, driver, tableName string) {
 	assert.NoError(t, sharedtest.CreateOutboxTable(d, tableName))
 	defer d.Close()
 
-	metrics := newTestMetrics(t)
+	metrics, reader := newTestMetrics(t)
 	fw, err := forwarder.New(d, mockBus, &forwarder.Options{
 		PollingInterval: 100 * time.Millisecond,
 		Serializer:      serialization.NewJSONSerializer(),
@@ -281,9 +310,9 @@ func testDirectEmitDroppedGoesToPoller(t *testing.T, driver, tableName string) {
 	assert.NoError(t, err)
 
 	assertOutboxEmpty(t, d, tableName, 2*time.Second)
-	assert.Equal(t, float64(1), testutil.ToFloat64(metrics.DirectDropped))
-	assert.Equal(t, float64(0), testutil.ToFloat64(metrics.DirectPublished))
-	assert.GreaterOrEqual(t, testutil.ToFloat64(metrics.PollerPublished), float64(1))
+	assert.Equal(t, int64(1), readCounter(t, reader, "strongforce.forwarder.direct.dropped"))
+	assert.Equal(t, int64(0), readCounter(t, reader, "strongforce.forwarder.direct.published"))
+	assert.GreaterOrEqual(t, readCounter(t, reader, "strongforce.forwarder.poller.published"), int64(1))
 	mockBus.AssertExpectations(t)
 }
 

@@ -137,9 +137,9 @@ func (fw *DBForwarder) NotifyCommitted(ctx context.Context, evs []*events.Serial
 	for _, e := range evs {
 		select {
 		case fw.directQueue <- directJob{event: e, enqueuedAt: now}:
-			fw.metrics.incDirectEnqueued()
+			fw.metrics.incDirectEnqueued(ctx)
 		default:
-			fw.metrics.incDirectDropped()
+			fw.metrics.incDirectDropped(ctx)
 			fw.logger.Sugar().Debugf("direct-emit queue full, event %s dropped to poller", e.Metadata.Id.String())
 		}
 	}
@@ -162,16 +162,16 @@ func (fw *DBForwarder) directWorker(ctx context.Context) {
 
 func (fw *DBForwarder) processDirect(ctx context.Context, job directJob) {
 	if err := fw.emitEvent(ctx, job.event); err != nil {
-		fw.metrics.incDirectFailed()
+		fw.metrics.incDirectFailed(ctx)
 		fw.logger.Sugar().Warnf("direct emit publish failed for %s: %s", job.event.Metadata.Id.String(), err.Error())
 		return
 	}
 
-	fw.metrics.observeEmitLatency(time.Since(job.enqueuedAt).Seconds())
-	fw.metrics.incDirectPublished()
+	fw.metrics.observeEmitLatency(ctx, time.Since(job.enqueuedAt).Seconds())
+	fw.metrics.incDirectPublished(ctx)
 
 	if err := fw.deleteEvent(ctx, job.event.Metadata.Id); err != nil {
-		fw.metrics.incDirectDeleteFailed()
+		fw.metrics.incDirectDeleteFailed(ctx)
 		fw.logger.Sugar().Warnf("direct emit delete failed for %s: %s — poller will retry", job.event.Metadata.Id.String(), err.Error())
 	}
 }
@@ -191,7 +191,7 @@ func (fw *DBForwarder) sampleOutboxDepth(ctx context.Context) {
 		fw.logger.Sugar().Debugf("failed to sample outbox depth: %s", err.Error())
 		return
 	}
-	fw.metrics.setOutboxDepth(float64(count))
+	fw.metrics.setOutboxDepth(ctx, count)
 }
 
 func (fw *DBForwarder) processEvents(ctx context.Context, query string) error {
@@ -284,11 +284,11 @@ func (fw *DBForwarder) publishBatch(ctx context.Context, evs []*events.Serialize
 			defer func() { <-sem }()
 
 			if err := fw.emitEvent(ctx, ev); err != nil {
-				fw.metrics.incPollerFailed()
+				fw.metrics.incPollerFailed(ctx)
 				fw.logger.Warn("failed to publish event: " + err.Error())
 				return
 			}
-			fw.metrics.incPollerPublished()
+			fw.metrics.incPollerPublished(ctx)
 			mu.Lock()
 			ids = append(ids, ev.Metadata.Id)
 			mu.Unlock()
