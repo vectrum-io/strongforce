@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.0](https://github.com/vectrum-io/strongforce/compare/v0.16.0...v0.17.0) (2026-04-17)
+
+
+### Features
+
+* support direct emit for events in happy path ([7b5676f](https://github.com/vectrum-io/strongforce/commit/7b5676fbaa2e8beacea1b48a7231d449b9e6a5fd))
+
 ## [0.16.0](https://github.com/vectrum-io/strongforce/compare/v0.15.0...v0.16.0) (2025-02-01)
 
 
