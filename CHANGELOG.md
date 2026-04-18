@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.0](https://github.com/vectrum-io/strongforce/compare/v0.17.0...v0.18.0) (2026-04-18)
+
+
+### Features
+
+* update go to 1.16 and use otel for metrics ([c1be2ad](https://github.com/vectrum-io/strongforce/commit/c1be2adf1ebe60e4b3448b2210c38e2e4df32566))
+
 ## [0.17.0](https://github.com/vectrum-io/strongforce/compare/v0.16.0...v0.17.0) (2026-04-17)
 
 
