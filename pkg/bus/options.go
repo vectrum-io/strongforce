@@ -34,6 +34,15 @@ func WithFilterSubject(subject string) SubscribeOption {
 	}
 }
 
+// WithFilterSubjects appends each subject to the consumer's FilterSubjects list.
+// Use when a single consumer needs to filter on multiple subjects (NATS >= 2.10).
+// Equivalent to chaining WithFilterSubject calls but clearer at the call site.
+func WithFilterSubjects(subjects ...string) SubscribeOption {
+	return func(options *SubscriptionOptions) {
+		options.FilterSubjects = append(options.FilterSubjects, subjects...)
+	}
+}
+
 func WithGuaranteeOrder() SubscribeOption {
 	return func(options *SubscriptionOptions) {
 		options.GuaranteeOrder = true
