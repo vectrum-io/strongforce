@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.19.0](https://github.com/vectrum-io/strongforce/compare/v0.18.0...v0.19.0) (2026-05-11)
+
+
+### Features
+
+* add withFilterSubjects function for nats bus ([fefab38](https://github.com/vectrum-io/strongforce/commit/fefab38bdafe9627d77cae0eb6d3d6713a1093ae))
+
 ## [0.18.0](https://github.com/vectrum-io/strongforce/compare/v0.17.0...v0.18.0) (2026-04-18)
 
 
