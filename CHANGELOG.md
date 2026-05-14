@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.0](https://github.com/vectrum-io/strongforce/compare/v0.19.0...v0.20.0) (2026-05-14)
+
+
+### Features
+
+* improve concurrncy for bus handlers ([6bdf7c4](https://github.com/vectrum-io/strongforce/commit/6bdf7c4ffba7269da29e89ae592b174f0480e167))
+
 ## [0.19.0](https://github.com/vectrum-io/strongforce/compare/v0.18.0...v0.19.0) (2026-05-11)
 
 
