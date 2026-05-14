@@ -64,7 +64,7 @@ func createMockMessage(id string, subject string) *mockMessage {
 func TestSubscription(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 256)
-	sub := NewSubscription(mockChan, nil, mockCtx.Stop)
+	sub := NewSubscription(mockChan, 1, nil, mockCtx.Stop)
 
 	err := sub.AddHandler("test.*", func(ctx context.Context, message InboundMessage) error {
 		return nil
@@ -98,7 +98,7 @@ func TestSubscription(t *testing.T) {
 func TestSubscriptionAddHandlerTwice(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 256)
-	sub := NewSubscription(mockChan, nil, mockCtx.Stop)
+	sub := NewSubscription(mockChan, 1, nil, mockCtx.Stop)
 
 	err := sub.AddHandler("test.*", func(ctx context.Context, message InboundMessage) error {
 		return nil
@@ -114,7 +114,7 @@ func TestSubscriptionAddHandlerTwice(t *testing.T) {
 func TestSubscriptionClose(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 256)
-	sub := NewSubscription(mockChan, nil, mockCtx.Stop)
+	sub := NewSubscription(mockChan, 1, nil, mockCtx.Stop)
 
 	sub.Start(context.Background())
 
@@ -127,7 +127,7 @@ func TestSubscriptionClose(t *testing.T) {
 func TestRouteMessageToTwoHandlers(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 256)
-	sub := NewSubscription(mockChan, nil, mockCtx.Stop)
+	sub := NewSubscription(mockChan, 1, nil, mockCtx.Stop)
 
 	receivedOne := false
 	receivedTwo := false
@@ -172,7 +172,7 @@ func TestErrorCallbackHandlersFailed(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 256)
 
-	sub := NewSubscription(mockChan, nil, mockCtx.Stop)
+	sub := NewSubscription(mockChan, 1, nil, mockCtx.Stop)
 	sub.Start(context.Background())
 
 	subOneErr := sub.AddHandler("test.*", func(ctx context.Context, message InboundMessage) error {
@@ -208,7 +208,7 @@ func TestErrorCallbackNotRoutable(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 256)
 
-	sub := NewSubscription(mockChan, nil, mockCtx.Stop)
+	sub := NewSubscription(mockChan, 1, nil, mockCtx.Stop)
 	sub.Start(context.Background())
 
 	var subErrors []error

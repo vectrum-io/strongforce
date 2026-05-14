@@ -64,11 +64,14 @@ func TestNATSStreamMigrator(t *testing.T) {
 	assert.Equal(t, "migration-test-2", testStreamTwoNats.Config.Name)
 }
 
-func TestBusOrderSpam(t *testing.T) {
-	streamName := "test-spam"
-	subject := "test-1"
+// TestBusOrderSpamGuaranteed asserts that WithGuaranteeOrder preserves publish
+// order end-to-end: 5k messages published in sequence arrive at the handler in
+// the same sequence. The guarantee comes from MaxAckPending=1 plus the
+// single-goroutine handler — both knobs are flipped on by WithGuaranteeOrder.
+func TestBusOrderSpamGuaranteed(t *testing.T) {
+	streamName := "test-spam-ordered"
+	subject := "test-1-ordered"
 
-	// create test stream
 	err := sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject)
 	assert.NoError(t, err)
 
@@ -77,10 +80,10 @@ func TestBusOrderSpam(t *testing.T) {
 	})
 	assert.NoError(t, err)
 
-	subscription, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject))
+	subscription, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName,
+		bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
 	assert.NoError(t, err)
 
-	// send 5k messages
 	for i := 0; i < 5000; i++ {
 		err = natsBus.Publish(context.Background(), &bus.OutboundMessage{
 			Id:      fmt.Sprintf("%d", i),
@@ -99,10 +102,66 @@ func TestBusOrderSpam(t *testing.T) {
 
 	subscription.Start(context.Background())
 
-	// validate order
 	for i := 0; i < 5000; i++ {
 		message := <-msgChan
 		assert.Equal(t, fmt.Sprintf("%d", i), string(message.Data))
+	}
+}
+
+// TestBusConcurrentSpam asserts that under the default concurrent dispatch,
+// every published message reaches the handler exactly once. Order is not
+// asserted — N goroutines race on the inbound channel, so receive order is
+// undefined. This is the throughput path most subscribers take; the property
+// that matters is "no message dropped, no message duplicated".
+func TestBusConcurrentSpam(t *testing.T) {
+	streamName := "test-spam-concurrent"
+	subject := "test-1-concurrent"
+
+	err := sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject)
+	assert.NoError(t, err)
+
+	natsBus, err := nats.New(&nats.Options{
+		NATSAddress: sharedtest.NATS,
+	})
+	assert.NoError(t, err)
+
+	subscription, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName,
+		bus.WithFilterSubject(subject))
+	assert.NoError(t, err)
+
+	const total = 5000
+	for i := 0; i < total; i++ {
+		err = natsBus.Publish(context.Background(), &bus.OutboundMessage{
+			Id:      fmt.Sprintf("%d", i),
+			Subject: subject,
+			Data:    []byte(fmt.Sprintf("%d", i)),
+		})
+		assert.NoError(t, err)
+	}
+
+	msgChan := make(chan bus.InboundMessage, total)
+	err = subscription.AddHandler("*", func(ctx context.Context, message bus.InboundMessage) error {
+		msgChan <- message
+		return nil
+	})
+	assert.NoError(t, err)
+
+	subscription.Start(context.Background())
+
+	seen := make(map[string]int, total)
+	timeout := time.After(30 * time.Second)
+	for len(seen) < total {
+		select {
+		case message := <-msgChan:
+			seen[string(message.Data)]++
+		case <-timeout:
+			t.Fatalf("only received %d/%d messages within timeout", len(seen), total)
+		}
+	}
+
+	for i := 0; i < total; i++ {
+		key := fmt.Sprintf("%d", i)
+		assert.Equalf(t, 1, seen[key], "message %s seen %d times", key, seen[key])
 	}
 }
 

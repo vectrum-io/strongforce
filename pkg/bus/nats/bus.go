@@ -74,9 +74,17 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		deliverPolicy = jetstream.DeliverNewPolicy
 	}
 
-	maxAckPending := -1
+	// Concurrency drives two things in lockstep: how many goroutines the
+	// subscription spawns and the JetStream MaxAckPending. Pinning them 1:1
+	// means each in-flight message has an awake worker (or is moments away
+	// from one) — its AckWait can't expire while the message sits in a queue.
+	// GuaranteeOrder always wins: ordered delivery requires a single worker.
+	concurrency := subscriptionOptions.Concurrency
+	if concurrency <= 0 {
+		concurrency = bus.DefaultConcurrency
+	}
 	if subscriptionOptions.GuaranteeOrder {
-		maxAckPending = 1
+		concurrency = 1
 	}
 
 	var durableName string
@@ -91,7 +99,9 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		DeliverPolicy:   &deliverPolicy,
 		FilterSubjects:  subscriptionOptions.FilterSubjects,
 		MaxDeliverTries: subscriptionOptions.MaxDeliveryTries,
-		MaxAckPending:   maxAckPending,
+		MaxAckPending:   concurrency,
+		Concurrency:     concurrency,
+		AckWait:         subscriptionOptions.AckWait,
 		Deserializer:    subscriptionOptions.Deserializer,
 	})
 	if err != nil {

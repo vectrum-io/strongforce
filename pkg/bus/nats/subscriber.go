@@ -37,6 +37,13 @@ type SubscribeOpts struct {
 	MaxDeliverTries int
 	MessageBuffer   int
 	Deserializer    serialization.Serializer
+	// Concurrency is the number of handler goroutines the bus.Subscription
+	// will spawn. Zero means single-threaded — preserves the historic default
+	// when callers go through the lower-level subscriber directly.
+	Concurrency int
+	// AckWait overrides JetStream's per-message AckWait (default 30 s on the
+	// server). Zero leaves the server default in place.
+	AckWait time.Duration
 }
 
 func (so *SubscribeOpts) validate(natsVersion *version.Version) error {
@@ -137,7 +144,11 @@ func (ns *Subscriber) SubscribeBroadcast(ctx context.Context, subject string, op
 		return nil, err
 	}
 
-	return bus.NewSubscription(msgChan, opts.Deserializer, func() {
+	// Core-NATS broadcast has no JetStream ack semantics, so concurrency is
+	// purely about handler parallelism. Default to single-goroutine — broadcast
+	// callers historically expected sequential handling and they aren't the
+	// throughput-critical path.
+	return bus.NewSubscription(msgChan, 1, opts.Deserializer, func() {
 		_ = subscription.Drain()
 		_ = subscription.Unsubscribe()
 	}), nil
@@ -176,6 +187,7 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 			FilterSubjects: opts.FilterSubjects,
 			MaxDeliver:     opts.MaxDeliverTries,
 			MaxAckPending:  opts.MaxAckPending,
+			AckWait:        opts.AckWait,
 		}
 
 		newConsumer, err := stream.CreateOrUpdateConsumer(ctx, consumerConfig)
@@ -192,7 +204,7 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 		return nil, err
 	}
 
-	return bus.NewSubscription(msgChan, opts.Deserializer, func() {
+	return bus.NewSubscription(msgChan, opts.Concurrency, opts.Deserializer, func() {
 		consumeCtx.Stop()
 	}), nil
 }

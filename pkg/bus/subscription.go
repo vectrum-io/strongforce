@@ -26,15 +26,23 @@ type Subscription struct {
 	onError         ErrorCallbackFunc
 	deserializer    serialization.Serializer
 	isRunning       bool
+	concurrency     int
 }
 
-func NewSubscription(inboundMessages chan InboundMessage, deserializer serialization.Serializer, unsubscribe UnsubscribeFn) *Subscription {
+// NewSubscription builds a subscription that dispatches inbound messages to
+// concurrency goroutines. concurrency<=0 collapses to 1 — the historical
+// single-goroutine behaviour callers used to get implicitly.
+func NewSubscription(inboundMessages chan InboundMessage, concurrency int, deserializer serialization.Serializer, unsubscribe UnsubscribeFn) *Subscription {
+	if concurrency <= 0 {
+		concurrency = 1
+	}
 	return &Subscription{
 		unsubscribe:     unsubscribe,
 		handlers:        make(map[string]HandlerFunc),
 		inboundMessages: inboundMessages,
 		handlersMu:      sync.RWMutex{},
 		deserializer:    deserializer,
+		concurrency:     concurrency,
 	}
 }
 
@@ -79,56 +87,64 @@ func (s *Subscription) AddHandler(pattern string, handlerFunc HandlerFunc) error
 func (s *Subscription) Start(ctx context.Context) {
 	s.isRunning = true
 
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				s.isRunning = false
-				return
-			case message := <-s.inboundMessages:
-				isMessageRouted := false
-				var handlerErrors []error
+	// Spawn concurrency workers all racing on the same inboundMessages channel.
+	// Go's channel receive is the synchronisation point — each message goes to
+	// exactly one worker. When ctx ends every worker observes Done on its next
+	// iteration; isRunning flips on the first worker that returns.
+	for i := 0; i < s.concurrency; i++ {
+		go s.runWorker(ctx)
+	}
+}
 
-				// prepare message
-				message.deserializer = s.deserializer
-
-				s.handlersMu.RLock()
-				for pattern, fn := range s.handlers {
-					if !MatchSubject(message.Subject, pattern) {
-						continue
-					}
-
-					isMessageRouted = true
-
-					if err := fn(message.MessageCtx, message); err != nil {
-						handlerErrors = append(handlerErrors, err)
-					}
-				}
-				s.handlersMu.RUnlock()
-
-				// could not route message
-				if !isMessageRouted {
-					if s.onError != nil {
-						s.onError(fmt.Errorf("%w: %s", ErrMessageNotRoutable, message.Subject))
-					}
-					continue
-				}
-
-				// there were errors in the handler functions
-				if len(handlerErrors) > 0 {
-					if s.onError != nil {
-						s.onError(fmt.Errorf("%w: %w", ErrMessageHandlerFailed, errors.Join(handlerErrors...)))
-					}
-					continue
-				}
-
-				if err := message.Ack(); err != nil {
-					if s.onError != nil {
-						s.onError(fmt.Errorf("%w: failed to ack message: %w", ErrMessageHandlerFailed, err))
-					}
-					continue
-				}
-			}
+func (s *Subscription) runWorker(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			s.isRunning = false
+			return
+		case message := <-s.inboundMessages:
+			s.handleMessage(message)
 		}
-	}()
+	}
+}
+
+func (s *Subscription) handleMessage(message InboundMessage) {
+	isMessageRouted := false
+	var handlerErrors []error
+
+	message.deserializer = s.deserializer
+
+	s.handlersMu.RLock()
+	for pattern, fn := range s.handlers {
+		if !MatchSubject(message.Subject, pattern) {
+			continue
+		}
+
+		isMessageRouted = true
+
+		if err := fn(message.MessageCtx, message); err != nil {
+			handlerErrors = append(handlerErrors, err)
+		}
+	}
+	s.handlersMu.RUnlock()
+
+	if !isMessageRouted {
+		if s.onError != nil {
+			s.onError(fmt.Errorf("%w: %s", ErrMessageNotRoutable, message.Subject))
+		}
+		return
+	}
+
+	if len(handlerErrors) > 0 {
+		if s.onError != nil {
+			s.onError(fmt.Errorf("%w: %w", ErrMessageHandlerFailed, errors.Join(handlerErrors...)))
+		}
+		return
+	}
+
+	if err := message.Ack(); err != nil {
+		if s.onError != nil {
+			s.onError(fmt.Errorf("%w: failed to ack message: %w", ErrMessageHandlerFailed, err))
+		}
+	}
 }
