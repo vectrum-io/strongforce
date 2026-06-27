@@ -95,6 +95,38 @@ func TestSubscription(t *testing.T) {
 	}
 }
 
+// A panicking handler must not crash the worker. The panic is converted into a
+// handler error: onError is notified and the message is left un-acked (so the
+// broker can redeliver / dead-letter it) rather than terminating the process.
+func TestSubscriptionRecoversHandlerPanic(t *testing.T) {
+	mockCtx := &mockContext{}
+	mockChan := make(chan InboundMessage, 1)
+	sub := NewSubscription(mockChan, 1, nil, mockCtx.Stop)
+
+	var capturedErr error
+	sub.OnError(func(err error) {
+		capturedErr = err
+	})
+
+	err := sub.AddHandler("test.*", func(ctx context.Context, message InboundMessage) error {
+		panic("boom")
+	})
+	assert.NoError(t, err)
+
+	msg := createMockMessage("1", "test.a")
+
+	// handleMessage must not propagate the panic (which would crash the process),
+	// and must not ack the message (Ack has no mock expectation, so a call fails).
+	assert.NotPanics(t, func() {
+		sub.handleMessage(*msg.msg)
+	})
+
+	assert.Error(t, capturedErr)
+	assert.ErrorIs(t, capturedErr, ErrMessageHandlerFailed)
+	assert.Contains(t, capturedErr.Error(), "handler panicked")
+	msg.AssertNotCalled(t, "Ack")
+}
+
 func TestSubscriptionAddHandlerTwice(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 256)

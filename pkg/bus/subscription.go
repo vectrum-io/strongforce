@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/vectrum-io/strongforce/pkg/serialization"
+	"runtime/debug"
 	"sync"
+
+	"github.com/vectrum-io/strongforce/pkg/serialization"
 )
 
 var (
@@ -122,7 +124,7 @@ func (s *Subscription) handleMessage(message InboundMessage) {
 
 		isMessageRouted = true
 
-		if err := fn(message.MessageCtx, message); err != nil {
+		if err := invokeHandler(message.MessageCtx, fn, message); err != nil {
 			handlerErrors = append(handlerErrors, err)
 		}
 	}
@@ -147,4 +149,15 @@ func (s *Subscription) handleMessage(message InboundMessage) {
 			s.onError(fmt.Errorf("%w: failed to ack message: %w", ErrMessageHandlerFailed, err))
 		}
 	}
+}
+
+// invokeHandler calls fn and converts a panic into an error.
+func invokeHandler(ctx context.Context, fn HandlerFunc, message InboundMessage) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("handler panicked: %v\n%s", r, debug.Stack())
+		}
+	}()
+
+	return fn(ctx, message)
 }
