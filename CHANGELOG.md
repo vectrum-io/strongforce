@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.20.1](https://github.com/vectrum-io/strongforce/compare/v0.20.0...v0.20.1) (2026-06-27)
+
+
+### Bug Fixes
+
+* catch panics in event handlers ([8dbd8b2](https://github.com/vectrum-io/strongforce/commit/8dbd8b209422458034c6adf6f976a3b35aa168fa))
+
 ## [0.20.0](https://github.com/vectrum-io/strongforce/compare/v0.19.0...v0.20.0) (2026-05-14)
 
 
