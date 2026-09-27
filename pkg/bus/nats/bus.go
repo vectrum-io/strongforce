@@ -142,7 +142,7 @@ func (b *Bus) Migrate(ctx context.Context) error {
 
 	for _, streamConfig := range streams {
 		b.logger.Infof("validating nats stream %s", streamConfig.Name)
-		_, err := js.StreamInfo(streamConfig.Name)
+		info, err := js.StreamInfo(streamConfig.Name)
 		if err != nil {
 			if !errors.Is(err, nats.ErrStreamNotFound) {
 				return fmt.Errorf("failed to get stream info: %w", err)
@@ -154,6 +154,12 @@ func (b *Bus) Migrate(ctx context.Context) error {
 				return fmt.Errorf("failed to add stream: %w", err)
 			}
 			continue
+		}
+
+		// The dead-letter stream is shared by every service; one that does not
+		// configure replicas must not scale it down.
+		if streamConfig.Name == DeadLetterStreamName && streamConfig.Replicas == 0 {
+			streamConfig.Replicas = info.Config.Replicas
 		}
 
 		b.logger.Infof("updating existing stream %s", streamConfig.Name)
