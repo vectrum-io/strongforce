@@ -17,15 +17,19 @@ import (
 const DefaultConcurrency = 8
 
 var DefaultSubscriptionOptions = SubscriptionOptions{
-	FilterSubjects:   []string{},
-	GuaranteeOrder:   false,
-	MaxDeliveryTries: 10,
+	FilterSubjects: []string{},
+	GuaranteeOrder: false,
+	RetryPolicy:    DefaultRetryPolicy,
 }
 
 type SubscriptionOptions struct {
-	FilterSubjects   []string
-	GuaranteeOrder   bool
-	MaxDeliveryTries int
+	FilterSubjects []string
+	GuaranteeOrder bool
+	// RetryPolicy controls redelivery of messages whose handler failed.
+	RetryPolicy RetryPolicy
+	// DropOnExhaustion drops messages that used up all attempts instead of
+	// dead-lettering them.
+	DropOnExhaustion bool
 	DeliveryPolicy   DeliveryPolicy
 	Durable          bool
 	Deserializer     serialization.Serializer
@@ -71,9 +75,28 @@ func WithGuaranteeOrder() SubscribeOption {
 	}
 }
 
+// WithMaxDeliveryTries sets the total number of deliveries (RetryPolicy.MaxAttempts)
+// before a message is dead-lettered or dropped.
 func WithMaxDeliveryTries(maxTries int) SubscribeOption {
 	return func(options *SubscriptionOptions) {
-		options.MaxDeliveryTries = maxTries
+		options.RetryPolicy.MaxAttempts = maxTries
+	}
+}
+
+// WithRetryPolicy replaces the subscription's retry policy. Unset fields fall
+// back to DefaultRetryPolicy.
+func WithRetryPolicy(policy RetryPolicy) SubscribeOption {
+	return func(options *SubscriptionOptions) {
+		options.RetryPolicy = policy
+	}
+}
+
+// WithDropOnExhaustion drops messages that used up all attempts instead of
+// dead-lettering them. Use it for messages that are worthless once stale, such
+// as heartbeats.
+func WithDropOnExhaustion() SubscribeOption {
+	return func(options *SubscriptionOptions) {
+		options.DropOnExhaustion = true
 	}
 }
 

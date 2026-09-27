@@ -23,6 +23,10 @@ type Options struct {
 	Logger         *zap.Logger
 	Streams        []nats.StreamConfig
 	OTelPropagator propagation.TextMapPropagator
+	// DeadLetter configures the shared dead-letter stream created by Migrate.
+	DeadLetter DeadLetterOptions
+	// Metrics is optional; nil disables subscription metrics.
+	Metrics *bus.Metrics
 }
 
 func New(options *Options) (*Bus, error) {
@@ -92,17 +96,29 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		durableName = subscriberName
 	}
 
+	var deadLetter bus.DeadLetterFunc
+	if !subscriptionOptions.DropOnExhaustion {
+		deadLetter = b.broadcaster.PublishDeadLetter
+	}
+
+	// The attempt limit is enforced by the subscription, not the server:
+	// a server-side MaxDeliver would drop messages whose handler kept
+	// exceeding AckWait without them ever being dead-lettered.
 	subscription, err := b.subscriber.Subscribe(ctx, stream, &SubscribeOpts{
 		ConsumerName:    subscriberName,
 		DurableName:     durableName,
 		CreateConsumer:  true,
 		DeliverPolicy:   &deliverPolicy,
 		FilterSubjects:  subscriptionOptions.FilterSubjects,
-		MaxDeliverTries: subscriptionOptions.MaxDeliveryTries,
+		MaxDeliverTries: -1,
 		MaxAckPending:   concurrency,
 		Concurrency:     concurrency,
 		AckWait:         subscriptionOptions.AckWait,
 		Deserializer:    subscriptionOptions.Deserializer,
+		RetryPolicy:     subscriptionOptions.RetryPolicy,
+		DeadLetter:      deadLetter,
+		Metrics:         b.options.Metrics,
+		Logger:          b.options.Logger,
 	})
 	if err != nil {
 		return nil, err
@@ -122,7 +138,9 @@ func (b *Bus) Migrate(ctx context.Context) error {
 		return fmt.Errorf("failed to get jetstream context: %w", err)
 	}
 
-	for _, streamConfig := range b.options.Streams {
+	streams := append([]nats.StreamConfig{b.options.DeadLetter.streamConfig()}, b.options.Streams...)
+
+	for _, streamConfig := range streams {
 		b.logger.Infof("validating nats stream %s", streamConfig.Name)
 		_, err := js.StreamInfo(streamConfig.Name)
 		if err != nil {
