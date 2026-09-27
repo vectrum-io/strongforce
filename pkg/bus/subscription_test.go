@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -20,24 +21,24 @@ func (m *mockContext) Stop() {
 type mockMessage struct {
 	mock.Mock
 	msg       *InboundMessage
-	processed bool
+	processed atomic.Bool
 }
 
 func (m *mockMessage) Ack() error {
 	args := m.Called()
-	m.processed = true
+	m.processed.Store(true)
 	return args.Error(0)
 }
 
 func (m *mockMessage) Nak(retryAfter time.Duration) error {
 	args := m.Called(retryAfter)
-	m.processed = true
+	m.processed.Store(true)
 	return args.Error(0)
 }
 
 func (m *mockMessage) WaitUntilProcessed() {
 	for {
-		if m.processed {
+		if m.processed.Load() {
 			return
 		}
 		time.Sleep(100 * time.Nanosecond)
@@ -96,8 +97,8 @@ func TestSubscription(t *testing.T) {
 }
 
 // A panicking handler must not crash the worker. The panic is converted into a
-// handler error: onError is notified and the message is left un-acked (so the
-// broker can redeliver / dead-letter it) rather than terminating the process.
+// handler error: onError is notified and the message is nak'd for a retry
+// rather than terminating the process.
 func TestSubscriptionRecoversHandlerPanic(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 1)
@@ -114,6 +115,7 @@ func TestSubscriptionRecoversHandlerPanic(t *testing.T) {
 	assert.NoError(t, err)
 
 	msg := createMockMessage("1", "test.a")
+	msg.On("Nak", mock.Anything).Once().Return(nil)
 
 	// handleMessage must not propagate the panic (which would crash the process),
 	// and must not ack the message (Ack has no mock expectation, so a call fails).
@@ -223,12 +225,12 @@ func TestErrorCallbackHandlersFailed(t *testing.T) {
 	})
 
 	msg := createMockMessage("1", "test.wow")
+	msg.On("Nak", mock.Anything).Once().Return(nil)
 	mockChan <- *msg.msg
 
-	assert.Eventually(t, func() bool {
-		return len(subErrors) == 1
-	}, 1*time.Millisecond, 10*time.Nanosecond)
+	msg.WaitUntilProcessed()
 
+	assert.Len(t, subErrors, 1)
 	assert.ErrorIs(t, subErrors[0], ErrMessageHandlerFailed)
 	assert.ErrorContains(t, subErrors[0], "dummy one")
 	assert.ErrorContains(t, subErrors[0], "dummy two")
@@ -236,26 +238,24 @@ func TestErrorCallbackHandlersFailed(t *testing.T) {
 	msg.AssertExpectations(t)
 }
 
-func TestErrorCallbackNotRoutable(t *testing.T) {
+func TestNotRoutableMessageIsAckedWithoutError(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 256)
 
 	sub := NewSubscription(mockChan, 1, nil, mockCtx.Stop)
-	sub.Start(context.Background())
 
 	var subErrors []error
 	sub.OnError(func(err error) {
 		subErrors = append(subErrors, err)
 	})
+	sub.Start(context.Background())
 
 	msg := createMockMessage("1", "test.wow")
+	msg.On("Ack").Once().Return(nil)
 	mockChan <- *msg.msg
 
-	assert.Eventually(t, func() bool {
-		return len(subErrors) == 1
-	}, 1*time.Millisecond, 10*time.Nanosecond)
+	msg.WaitUntilProcessed()
 
-	assert.ErrorIs(t, subErrors[0], ErrMessageNotRoutable)
-
+	assert.Empty(t, subErrors)
 	msg.AssertExpectations(t)
 }

@@ -1,0 +1,119 @@
+package nats
+
+import (
+	"context"
+	"fmt"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/nats-io/nats.go"
+	"github.com/vectrum-io/strongforce/pkg/bus"
+)
+
+const (
+	DeadLetterStreamName    = "dead_letters"
+	DeadLetterSubjectPrefix = "dlq"
+
+	DeadLetterHeaderError          = "Strongforce-Dlq-Error"
+	DeadLetterHeaderStream         = "Strongforce-Dlq-Stream"
+	DeadLetterHeaderConsumer       = "Strongforce-Dlq-Consumer"
+	DeadLetterHeaderSubject        = "Strongforce-Dlq-Subject"
+	DeadLetterHeaderMessageId      = "Strongforce-Dlq-Message-Id"
+	DeadLetterHeaderStreamSequence = "Strongforce-Dlq-Stream-Sequence"
+	DeadLetterHeaderNumDelivered   = "Strongforce-Dlq-Num-Delivered"
+	DeadLetterHeaderFailedAt       = "Strongforce-Dlq-Failed-At"
+
+	maxDeadLetterErrorLength = 2048
+	deadLetterPublishTimeout = 10 * time.Second
+)
+
+// DeadLetterOptions configures the shared dead-letter stream.
+type DeadLetterOptions struct {
+	// MaxAge bounds how long dead letters are kept. Defaults to 30 days.
+	MaxAge time.Duration
+	// MaxBytes caps the stream size; oldest dead letters are discarded first.
+	// Defaults to 1 GiB.
+	MaxBytes int64
+	// Replicas of the stream. Zero leaves the server default.
+	Replicas int
+}
+
+func (o DeadLetterOptions) streamConfig() nats.StreamConfig {
+	maxAge := o.MaxAge
+	if maxAge <= 0 {
+		maxAge = 30 * 24 * time.Hour
+	}
+	maxBytes := o.MaxBytes
+	if maxBytes <= 0 {
+		maxBytes = 1024 * 1024 * 1024
+	}
+	return nats.StreamConfig{
+		Name:        DeadLetterStreamName,
+		Description: "messages that exhausted their retries, keyed by origin stream and consumer",
+		Subjects:    []string{DeadLetterSubjectPrefix + ".>"},
+		Retention:   nats.LimitsPolicy,
+		MaxMsgs:     -1,
+		MaxBytes:    maxBytes,
+		MaxAge:      maxAge,
+		Discard:     nats.DiscardOld,
+		Storage:     nats.FileStorage,
+		Replicas:    o.Replicas,
+		Duplicates:  2 * time.Minute,
+	}
+}
+
+// DeadLetterSubject is the subject dead letters of one consumer are stored under.
+func DeadLetterSubject(stream, consumer string) string {
+	return fmt.Sprintf("%s.%s.%s", DeadLetterSubjectPrefix, stream, consumer)
+}
+
+// PublishDeadLetter stores message in the dead-letter stream. It keeps the
+// original payload and headers (including trace context) and adds the failure
+// details as Strongforce-Dlq-* headers.
+func (nb *Broadcaster) PublishDeadLetter(ctx context.Context, message bus.InboundMessage, cause error) error {
+	delivery := message.Delivery
+
+	headers := nats.Header{}
+	for key, values := range message.Headers {
+		if strings.HasPrefix(key, "Nats-") {
+			continue
+		}
+		headers[key] = append([]string(nil), values...)
+	}
+
+	headers.Set(DeadLetterHeaderError, sanitizeHeaderValue(cause.Error()))
+	headers.Set(DeadLetterHeaderStream, delivery.Stream)
+	headers.Set(DeadLetterHeaderConsumer, delivery.Consumer)
+	headers.Set(DeadLetterHeaderSubject, message.Subject)
+	headers.Set(DeadLetterHeaderMessageId, message.Id)
+	headers.Set(DeadLetterHeaderStreamSequence, strconv.FormatUint(delivery.StreamSequence, 10))
+	headers.Set(DeadLetterHeaderNumDelivered, strconv.FormatUint(delivery.NumDelivered, 10))
+	headers.Set(DeadLetterHeaderFailedAt, time.Now().UTC().Format(time.RFC3339Nano))
+
+	// Stable per origin message, so a dead letter re-published after a failed
+	// Term is deduplicated by the stream.
+	msgId := fmt.Sprintf("%s:%s:%d", delivery.Stream, delivery.Consumer, delivery.StreamSequence)
+
+	// JetStream publishes with a context require a deadline.
+	ctx, cancel := context.WithTimeout(ctx, deadLetterPublishTimeout)
+	defer cancel()
+
+	_, err := nb.jetStream.PublishMsg(&nats.Msg{
+		Subject: DeadLetterSubject(delivery.Stream, delivery.Consumer),
+		Header:  headers,
+		Data:    message.Data,
+	}, nats.MsgId(msgId), nats.Context(ctx))
+
+	return err
+}
+
+// sanitizeHeaderValue strips line breaks, which would corrupt the header
+// block, and truncates long values such as panic stack traces.
+func sanitizeHeaderValue(value string) string {
+	value = strings.NewReplacer("\r\n", " | ", "\n", " | ", "\r", " ").Replace(value)
+	if len(value) > maxDeadLetterErrorLength {
+		value = value[:maxDeadLetterErrorLength]
+	}
+	return value
+}

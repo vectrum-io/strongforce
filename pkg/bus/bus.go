@@ -28,15 +28,34 @@ type OutboundMessage struct {
 }
 
 type InboundMessage struct {
-	MessageCtx   context.Context
-	Id           string
-	Subject      string
-	Data         []byte
-	Ack          func() error
-	Nak          func(retryAfter time.Duration) error
+	MessageCtx context.Context
+	Id         string
+	Subject    string
+	Data       []byte
+	Headers    map[string][]string
+	Delivery   DeliveryInfo
+	Ack        func() error
+	Nak        func(retryAfter time.Duration) error
+	// Term stops all further redeliveries of the message.
+	Term         func() error
 	deserializer serialization.Serializer
 }
 
+// DeliveryInfo is the broker-side position of a message. It is zero for
+// messages that have no delivery tracking, e.g. core NATS broadcasts.
+type DeliveryInfo struct {
+	Stream         string
+	Consumer       string
+	StreamSequence uint64
+	// NumDelivered counts deliveries of this message, starting at 1.
+	NumDelivered uint64
+}
+
+// Unmarshal deserializes the message payload. Failures are Permanent: a payload
+// that cannot be decoded will not decode on a retry either.
 func (im *InboundMessage) Unmarshal(dst interface{}) error {
-	return im.deserializer.Deserialize(im.Data, dst)
+	if err := im.deserializer.Deserialize(im.Data, dst); err != nil {
+		return Permanent(err)
+	}
+	return nil
 }

@@ -9,6 +9,7 @@ import (
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"github.com/vectrum-io/strongforce/pkg/serialization"
 	"go.opentelemetry.io/otel/propagation"
+	"go.uber.org/zap"
 	"time"
 )
 
@@ -44,6 +45,12 @@ type SubscribeOpts struct {
 	// AckWait overrides JetStream's per-message AckWait (default 30 s on the
 	// server). Zero leaves the server default in place.
 	AckWait time.Duration
+	// RetryPolicy, DeadLetter, Metrics and Logger are handed to the
+	// bus.Subscription; see bus.SubscriptionSettings.
+	RetryPolicy bus.RetryPolicy
+	DeadLetter  bus.DeadLetterFunc
+	Metrics     *bus.Metrics
+	Logger      *zap.Logger
 }
 
 func (so *SubscribeOpts) validate(natsVersion *version.Version) error {
@@ -204,37 +211,68 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 		return nil, err
 	}
 
-	return bus.NewSubscription(msgChan, opts.Concurrency, opts.Deserializer, func() {
-		consumeCtx.Stop()
+	return bus.NewSubscriptionWithSettings(msgChan, bus.SubscriptionSettings{
+		Concurrency:  opts.Concurrency,
+		Deserializer: opts.Deserializer,
+		Unsubscribe: func() {
+			consumeCtx.Stop()
+		},
+		RetryPolicy: opts.RetryPolicy,
+		DeadLetter:  opts.DeadLetter,
+		Metrics:     opts.Metrics,
+		Logger:      opts.Logger,
+		Stream:      streamName,
+		Consumer:    consumer.CachedInfo().Name,
 	}), nil
 }
 
+// handleNATSMessage forwards a core NATS message. Core NATS has no delivery
+// tracking, so settling it is a no-op.
 func (ns *Subscriber) handleNATSMessage(parentCtx context.Context, msg *nats.Msg, msgChan chan bus.InboundMessage) {
 	msgChan <- bus.InboundMessage{
 		MessageCtx: ns.getMessageCtx(parentCtx, msg.Header),
 		Id:         msg.Header.Get(nats.MsgIdHdr),
 		Subject:    msg.Subject,
 		Data:       msg.Data,
+		Headers:    msg.Header,
 		Ack: func() error {
-			return msg.Ack()
+			return nil
 		},
-		Nak: func(delay time.Duration) error {
-			return msg.NakWithDelay(delay)
+		Nak: func(time.Duration) error {
+			return nil
+		},
+		Term: func() error {
+			return nil
 		},
 	}
 }
 
 func (ns *Subscriber) handleJetStreamMessage(parentCtx context.Context, msg jetstream.Msg, msgChan chan bus.InboundMessage) {
+	var delivery bus.DeliveryInfo
+	if metadata, err := msg.Metadata(); err == nil {
+		delivery = bus.DeliveryInfo{
+			Stream:         metadata.Stream,
+			Consumer:       metadata.Consumer,
+			StreamSequence: metadata.Sequence.Stream,
+			NumDelivered:   metadata.NumDelivered,
+		}
+	}
+
 	msgChan <- bus.InboundMessage{
 		MessageCtx: ns.getMessageCtx(parentCtx, msg.Headers()),
 		Id:         msg.Headers().Get(jetstream.MsgIDHeader),
 		Subject:    msg.Subject(),
 		Data:       msg.Data(),
+		Headers:    msg.Headers(),
+		Delivery:   delivery,
 		Ack: func() error {
 			return msg.Ack()
 		},
 		Nak: func(delay time.Duration) error {
 			return msg.NakWithDelay(delay)
+		},
+		Term: func() error {
+			return msg.Term()
 		},
 	}
 }

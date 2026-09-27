@@ -9,6 +9,7 @@ import (
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"github.com/vectrum-io/strongforce/pkg/bus/nats"
 	sharedtest "github.com/vectrum-io/strongforce/tests/shared"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -317,4 +318,201 @@ func waitForMessage(subscriptions ...*bus.Subscription) (context.Context, bus.In
 	message := <-msg
 
 	return message.Ctx, message.Message, resChan
+}
+
+var fastRetryPolicy = bus.RetryPolicy{
+	MaxAttempts:  3,
+	InitialDelay: 10 * time.Millisecond,
+	MaxDelay:     20 * time.Millisecond,
+	Multiplier:   2,
+}
+
+func newMigratedBus(t *testing.T) *nats.Bus {
+	t.Helper()
+
+	natsBus, err := nats.New(&nats.Options{
+		NATSAddress: sharedtest.NATS,
+	})
+	assert.NoError(t, err)
+	assert.NoError(t, natsBus.Migrate(context.Background()))
+
+	return natsBus
+}
+
+func purgeDeadLetters(t *testing.T, subject string) nats2.JetStreamContext {
+	t.Helper()
+
+	nc, err := nats2.Connect(sharedtest.NATS)
+	assert.NoError(t, err)
+	t.Cleanup(nc.Close)
+
+	js, err := nc.JetStream()
+	assert.NoError(t, err)
+	assert.NoError(t, js.PurgeStream(nats.DeadLetterStreamName, &nats2.StreamPurgeRequest{Subject: subject}))
+
+	return js
+}
+
+func publishNumbered(t *testing.T, natsBus *nats.Bus, subject string, ids ...string) {
+	t.Helper()
+
+	for _, id := range ids {
+		assert.NoError(t, natsBus.Publish(context.Background(), &bus.OutboundMessage{
+			Id:      subject + "-" + id,
+			Subject: subject,
+			Data:    []byte(id),
+		}))
+	}
+}
+
+func TestBusDeadLettersExhaustedMessageAndContinuesInOrder(t *testing.T) {
+	streamName := "test-dead-letter"
+	subject := "test-dead-letter-subject"
+	// Unique per run: dead letters are deduplicated by stream sequence, which
+	// restarts at 1 whenever the test recreates the stream.
+	consumerName := fmt.Sprintf("%s-%d", streamName, time.Now().UnixNano())
+
+	assert.NoError(t, sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject))
+	natsBus := newMigratedBus(t)
+	dlqSubject := nats.DeadLetterSubject(streamName, consumerName)
+	js := purgeDeadLetters(t, dlqSubject)
+
+	subscription, err := natsBus.Subscribe(context.Background(), consumerName, streamName,
+		bus.WithFilterSubject(subject), bus.WithGuaranteeOrder(), bus.WithRetryPolicy(fastRetryPolicy))
+	assert.NoError(t, err)
+
+	var attempts atomic.Int32
+	received := make(chan string, 10)
+	assert.NoError(t, subscription.AddHandler(subject, func(ctx context.Context, message bus.InboundMessage) error {
+		if string(message.Data) == "poison" {
+			attempts.Add(1)
+			return errors.New("downstream unavailable")
+		}
+		received <- string(message.Data)
+		return nil
+	}))
+
+	publishNumbered(t, natsBus, subject, "poison", "next")
+	subscription.Start(context.Background())
+
+	select {
+	case data := <-received:
+		assert.Equal(t, "next", data)
+	case <-time.After(10 * time.Second):
+		t.Fatal("consumer did not move past the exhausted message")
+	}
+	assert.Equal(t, int32(3), attempts.Load())
+
+	deadLetter, err := js.GetLastMsg(nats.DeadLetterStreamName, dlqSubject)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "poison", string(deadLetter.Data))
+		assert.Equal(t, subject, deadLetter.Header.Get(nats.DeadLetterHeaderSubject))
+		assert.Equal(t, streamName, deadLetter.Header.Get(nats.DeadLetterHeaderStream))
+		assert.Equal(t, consumerName, deadLetter.Header.Get(nats.DeadLetterHeaderConsumer))
+		assert.Equal(t, "3", deadLetter.Header.Get(nats.DeadLetterHeaderNumDelivered))
+		assert.Equal(t, "1", deadLetter.Header.Get(nats.DeadLetterHeaderStreamSequence))
+		assert.Equal(t, subject+"-poison", deadLetter.Header.Get(nats.DeadLetterHeaderMessageId))
+		assert.Contains(t, deadLetter.Header.Get(nats.DeadLetterHeaderError), "downstream unavailable")
+	}
+}
+
+func TestBusDeadLettersPermanentErrorWithoutRetry(t *testing.T) {
+	streamName := "test-dead-letter-permanent"
+	subject := "test-dead-letter-permanent-subject"
+	// Unique per run: dead letters are deduplicated by stream sequence, which
+	// restarts at 1 whenever the test recreates the stream.
+	consumerName := fmt.Sprintf("%s-%d", streamName, time.Now().UnixNano())
+
+	assert.NoError(t, sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject))
+	natsBus := newMigratedBus(t)
+	dlqSubject := nats.DeadLetterSubject(streamName, consumerName)
+	js := purgeDeadLetters(t, dlqSubject)
+
+	subscription, err := natsBus.Subscribe(context.Background(), consumerName, streamName,
+		bus.WithFilterSubject(subject), bus.WithGuaranteeOrder(), bus.WithRetryPolicy(fastRetryPolicy))
+	assert.NoError(t, err)
+
+	var attempts atomic.Int32
+	assert.NoError(t, subscription.AddHandler(subject, func(ctx context.Context, message bus.InboundMessage) error {
+		attempts.Add(1)
+		return bus.Permanent(errors.New("incident does not exist"))
+	}))
+
+	publishNumbered(t, natsBus, subject, "gone")
+	subscription.Start(context.Background())
+
+	assert.Eventually(t, func() bool {
+		_, err := js.GetLastMsg(nats.DeadLetterStreamName, dlqSubject)
+		return err == nil
+	}, 10*time.Second, 20*time.Millisecond)
+	assert.Equal(t, int32(1), attempts.Load())
+}
+
+func TestBusDropsExhaustedMessageWhenConfigured(t *testing.T) {
+	streamName := "test-drop-exhausted"
+	subject := "test-drop-exhausted-subject"
+	// Unique per run: dead letters are deduplicated by stream sequence, which
+	// restarts at 1 whenever the test recreates the stream.
+	consumerName := fmt.Sprintf("%s-%d", streamName, time.Now().UnixNano())
+
+	assert.NoError(t, sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject))
+	natsBus := newMigratedBus(t)
+	dlqSubject := nats.DeadLetterSubject(streamName, consumerName)
+	js := purgeDeadLetters(t, dlqSubject)
+
+	subscription, err := natsBus.Subscribe(context.Background(), consumerName, streamName,
+		bus.WithFilterSubject(subject), bus.WithGuaranteeOrder(), bus.WithRetryPolicy(fastRetryPolicy),
+		bus.WithDropOnExhaustion())
+	assert.NoError(t, err)
+
+	received := make(chan string, 10)
+	assert.NoError(t, subscription.AddHandler(subject, func(ctx context.Context, message bus.InboundMessage) error {
+		if string(message.Data) == "stale" {
+			return errors.New("stale heartbeat")
+		}
+		received <- string(message.Data)
+		return nil
+	}))
+
+	publishNumbered(t, natsBus, subject, "stale", "fresh")
+	subscription.Start(context.Background())
+
+	select {
+	case data := <-received:
+		assert.Equal(t, "fresh", data)
+	case <-time.After(10 * time.Second):
+		t.Fatal("consumer did not move past the exhausted message")
+	}
+
+	_, err = js.GetLastMsg(nats.DeadLetterStreamName, dlqSubject)
+	assert.ErrorIs(t, err, nats2.ErrMsgNotFound)
+}
+
+func TestBusUnroutableMessageDoesNotBlockOrderedConsumer(t *testing.T) {
+	streamName := "test-unroutable"
+	consumerName := streamName + "-consumer"
+
+	assert.NoError(t, sharedtest.CreateNatsStream(sharedtest.NATS, streamName, "unroutable.>"))
+	natsBus := newMigratedBus(t)
+
+	subscription, err := natsBus.Subscribe(context.Background(), consumerName, streamName,
+		bus.WithFilterSubject("unroutable.>"), bus.WithGuaranteeOrder())
+	assert.NoError(t, err)
+
+	received := make(chan string, 10)
+	assert.NoError(t, subscription.AddHandler("unroutable.handled", func(ctx context.Context, message bus.InboundMessage) error {
+		received <- string(message.Data)
+		return nil
+	}))
+
+	publishNumbered(t, natsBus, "unroutable.ignored", "ignored")
+	publishNumbered(t, natsBus, "unroutable.handled", "handled")
+	subscription.Start(context.Background())
+
+	select {
+	case data := <-received:
+		assert.Equal(t, "handled", data)
+	case <-time.After(2 * time.Second):
+		t.Fatal("unroutable message blocked the ordered consumer")
+	}
 }
