@@ -2,12 +2,14 @@ package forwarder
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/oklog/ulid/v2"
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"github.com/vectrum-io/strongforce/pkg/db"
 	"github.com/vectrum-io/strongforce/pkg/events"
@@ -38,6 +40,10 @@ type DBForwarder struct {
 	directWorkers          int
 	directQueue            chan directJob
 	outboxDepthSampleEvery int
+	pollerBatchSize        int
+	pollerGracePeriod      time.Duration
+	pollerMaxBackoff       time.Duration
+	publishTimeout         time.Duration
 	metrics                *Metrics
 
 	workerWg sync.WaitGroup
@@ -75,6 +81,10 @@ func New(db db.DB, bus bus.Bus, options *Options) (*DBForwarder, error) {
 		directWorkers:          options.DirectWorkers,
 		directQueue:            make(chan directJob, options.DirectQueueSize),
 		outboxDepthSampleEvery: options.OutboxDepthSampleEvery,
+		pollerBatchSize:        options.PollerBatchSize,
+		pollerGracePeriod:      options.PollerGracePeriod,
+		pollerMaxBackoff:       options.PollerMaxBackoff,
+		publishTimeout:         options.PublishTimeout,
 		metrics:                options.Metrics,
 	}, nil
 }
@@ -91,13 +101,6 @@ func (fw *DBForwarder) Stop() error {
 }
 
 func (fw *DBForwarder) Start(ctx context.Context) error {
-	//goland:noinspection SqlNoDataSourceInspection
-	query := fmt.Sprintf(`
-		SELECT id, topic, payload, created_at
-		FROM %s
-		FOR UPDATE
-	`, fw.outboxTableName)
-
 	if fw.directEmit {
 		for i := 0; i < fw.directWorkers; i++ {
 			fw.workerWg.Add(1)
@@ -105,25 +108,52 @@ func (fw *DBForwarder) Start(ctx context.Context) error {
 		}
 	}
 
-	ticker := time.NewTicker(fw.pollingInterval)
-	defer ticker.Stop()
+	timer := time.NewTimer(fw.pollingInterval)
+	defer timer.Stop()
 
-	var tickCount uint64
+	delay := fw.pollingInterval
+	var pollCount uint64
 
 	for {
 		select {
-		case <-ticker.C:
-			if err := fw.processEvents(ctx, query); err != nil {
-				fw.logger.Sugar().Warnf("failed to process events: %s", err.Error())
+		case <-timer.C:
+			result, err := fw.processEvents(ctx)
+			delay = fw.nextPollDelay(delay, result, err)
+			if err != nil {
+				fw.logger.Sugar().Warnf("failed to process events, next poll in %s: %s", delay, err.Error())
 			}
-			tickCount++
-			if fw.outboxDepthSampleEvery > 0 && tickCount%uint64(fw.outboxDepthSampleEvery) == 0 {
-				fw.sampleOutboxDepth(ctx)
+
+			pollCount++
+			if fw.outboxDepthSampleEvery > 0 && pollCount%uint64(fw.outboxDepthSampleEvery) == 0 {
+				fw.sampleOutbox(ctx)
 			}
+
+			timer.Reset(delay)
 		case <-fw.stopChan:
 			return nil
 		}
 	}
+}
+
+// nextPollDelay backs off exponentially while polls fail, polls again right
+// away while a backlog is draining, and otherwise waits one polling interval.
+func (fw *DBForwarder) nextPollDelay(previous time.Duration, result pollResult, err error) time.Duration {
+	if err != nil {
+		next := previous * 2
+		if next < fw.pollingInterval {
+			next = fw.pollingInterval
+		}
+		if next > fw.pollerMaxBackoff {
+			next = fw.pollerMaxBackoff
+		}
+		return next
+	}
+
+	if result.batchFull {
+		return 0
+	}
+
+	return fw.pollingInterval
 }
 
 // NotifyCommitted implements outbox.CommitNotifier. It enqueues events for
@@ -161,7 +191,7 @@ func (fw *DBForwarder) directWorker(ctx context.Context) {
 }
 
 func (fw *DBForwarder) processDirect(ctx context.Context, job directJob) {
-	if err := fw.emitEvent(ctx, job.event); err != nil {
+	if err := fw.publishWithTimeout(ctx, job.event); err != nil {
 		fw.metrics.incDirectFailed(ctx)
 		fw.logger.Sugar().Warnf("direct emit publish failed for %s: %s", job.event.Metadata.Id.String(), err.Error())
 		return
@@ -183,120 +213,122 @@ func (fw *DBForwarder) deleteEvent(ctx context.Context, id events.EventID) error
 	return err
 }
 
-func (fw *DBForwarder) sampleOutboxDepth(ctx context.Context) {
-	var count int64
+// sampleOutbox records the outbox depth and the age of its oldest row, read
+// from the timestamp encoded in the smallest ULID id.
+func (fw *DBForwarder) sampleOutbox(ctx context.Context) {
+	var sample struct {
+		Count  int64          `db:"depth"`
+		Oldest sql.NullString `db:"oldest_id"`
+	}
 	//goland:noinspection SqlNoDataSourceInspection
-	q := fmt.Sprintf("SELECT COUNT(*) FROM %s", fw.outboxTableName)
-	if err := fw.db.Connection().GetContext(ctx, &count, q); err != nil {
-		fw.logger.Sugar().Debugf("failed to sample outbox depth: %s", err.Error())
+	q := fmt.Sprintf("SELECT COUNT(*) AS depth, MIN(id) AS oldest_id FROM %s", fw.outboxTableName)
+	if err := fw.db.Connection().GetContext(ctx, &sample, q); err != nil {
+		fw.logger.Sugar().Debugf("failed to sample outbox: %s", err.Error())
 		return
 	}
-	fw.metrics.setOutboxDepth(ctx, count)
+	fw.metrics.setOutboxDepth(ctx, sample.Count)
+
+	if !sample.Oldest.Valid {
+		fw.metrics.setOutboxOldestAge(ctx, 0)
+		return
+	}
+	oldest, err := ulid.Parse(sample.Oldest.String)
+	if err != nil {
+		return
+	}
+	fw.metrics.setOutboxOldestAge(ctx, time.Since(oldest.Timestamp()).Seconds())
 }
 
-func (fw *DBForwarder) processEvents(ctx context.Context, query string) error {
+type pollResult struct {
+	batchFull bool
+}
+
+// processEvents publishes one batch of outbox rows in id order. It locks only
+// the rows of the batch (READ COMMITTED takes no gap locks, so concurrent
+// inserts into the outbox never wait on the poller) and skips rows another
+// poller holds. It stops at the first failed publish, deletes the rows
+// published before it and returns the publish error.
+func (fw *DBForwarder) processEvents(ctx context.Context) (pollResult, error) {
+	query, args := fw.pollQuery(time.Now())
+
+	tx, err := fw.db.Connection().BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
+	if err != nil {
+		return pollResult{}, fmt.Errorf("failed to begin poll transaction: %w", err)
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
 	var eventRows []*outbox.EventEntity
+	if err := tx.SelectContext(ctx, &eventRows, tx.Rebind(query), args...); err != nil {
+		return pollResult{}, fmt.Errorf("failed to select outbox rows: %w", err)
+	}
 
-	return fw.db.Tx(ctx, func(ctx context.Context, tx *sqlx.Tx) error {
-		err := tx.SelectContext(ctx, &eventRows, query)
+	if len(eventRows) == 0 {
+		return pollResult{}, nil
+	}
+
+	publishedIds := make([]events.EventID, 0, len(eventRows))
+	var publishErr error
+	for _, row := range eventRows {
+		event, err := row.ToSerializedEvent()
 		if err != nil {
-			return err
+			fw.logger.Error("failed to convert db entity to event spec: " + err.Error())
+			continue
 		}
 
-		if len(eventRows) == 0 {
-			return nil
+		if err := fw.publishWithTimeout(ctx, event); err != nil {
+			fw.metrics.incPollerFailed(ctx)
+			publishErr = fmt.Errorf("failed to publish event %s: %w", event.Metadata.Id.String(), err)
+			break
 		}
+		fw.metrics.incPollerPublished(ctx)
+		publishedIds = append(publishedIds, event.Metadata.Id)
+	}
 
-		serializedEvents := make([]*events.SerializedEvent, 0, len(eventRows))
-		for _, row := range eventRows {
-			event, err := row.ToSerializedEvent()
-			if err != nil {
-				fw.logger.Error("failed to convert db entity to event spec: " + err.Error())
-				continue
-			}
-			serializedEvents = append(serializedEvents, event)
-		}
-
-		if len(serializedEvents) == 0 {
-			return nil
-		}
-
-		publishedIds := fw.publishBatch(ctx, serializedEvents)
-		if len(publishedIds) == 0 {
-			return nil
-		}
-
-		queryString := fmt.Sprintf("DELETE FROM %s WHERE id IN (?)", fw.outboxTableName)
-		delQuery, args, err := sqlx.In(queryString, publishedIds)
+	if len(publishedIds) > 0 {
+		deleteQuery, deleteArgs, err := sqlx.In(fmt.Sprintf("DELETE FROM %s WHERE id IN (?)", fw.outboxTableName), publishedIds)
 		if err != nil {
-			return fmt.Errorf("failed to construct deletion query: %w", err)
+			return pollResult{}, fmt.Errorf("failed to construct deletion query: %w", err)
 		}
-
-		delQuery = tx.Rebind(delQuery)
-		if _, err := tx.ExecContext(ctx, delQuery, args...); err != nil {
-			return fmt.Errorf("failed to delete published events: %w", err)
+		if _, err := tx.ExecContext(ctx, tx.Rebind(deleteQuery), deleteArgs...); err != nil {
+			return pollResult{}, fmt.Errorf("failed to delete published events: %w", err)
 		}
+	}
 
-		return nil
-	})
+	if err := tx.Commit(); err != nil {
+		return pollResult{}, fmt.Errorf("failed to commit poll transaction: %w", err)
+	}
+
+	return pollResult{batchFull: len(eventRows) == fw.pollerBatchSize}, publishErr
 }
 
-// publishBatch publishes events concurrently, bounded by directWorkers (or
-// sequentially when direct emit is disabled / workers == 0). Returns the ids
-// of successfully published events so the caller can delete them in a single
-// query.
-func (fw *DBForwarder) publishBatch(ctx context.Context, evs []*events.SerializedEvent) []events.EventID {
-	// Pick the concurrency cap. A batch of 3 events with directWorkers=8 only
-	// needs 3 goroutines; no point allocating 8 slots we'll never fill.
-	concurrency := fw.directWorkers
-	if concurrency <= 0 {
-		concurrency = 1
-	}
-	if concurrency > len(evs) {
-		concurrency = len(evs)
-	}
+// pollQuery selects the next batch in id order. With direct emit, rows younger
+// than the grace period are left to the direct-emit workers: ULIDs start with
+// their creation time, so a ULID with the cutoff time and zero entropy bounds
+// them on the primary key.
+func (fw *DBForwarder) pollQuery(now time.Time) (string, []interface{}) {
+	//goland:noinspection SqlNoDataSourceInspection
+	query := fmt.Sprintf("SELECT id, topic, payload, created_at FROM %s", fw.outboxTableName)
+	var args []interface{}
 
-	var (
-		// mu guards the ids slice: multiple goroutines append concurrently.
-		mu sync.Mutex
-		// ids collects successfully published event ids so the caller can
-		// issue a single batched DELETE.
-		ids = make([]events.EventID, 0, len(evs))
-		// sem is a counting semaphore implemented as a buffered channel.
-		// Capacity == max goroutines allowed to run emitEvent at once.
-		// A token is a struct{}{} value — empty struct uses zero memory.
-		sem = make(chan struct{}, concurrency)
-		// wg tracks when all spawned goroutines have finished so we can
-		// return a complete ids slice to the caller.
-		wg sync.WaitGroup
-	)
-
-	for _, ev := range evs {
-		wg.Add(1)
-		// Acquire a slot BEFORE spawning the goroutine.
-		// If the buffer is full this blocks.
-		sem <- struct{}{}
-
-		go func() {
-			defer wg.Done()
-			// Release the slot when the goroutine exits so the next
-			// iteration of the for-loop can acquire one and proceed.
-			defer func() { <-sem }()
-
-			if err := fw.emitEvent(ctx, ev); err != nil {
-				fw.metrics.incPollerFailed(ctx)
-				fw.logger.Warn("failed to publish event: " + err.Error())
-				return
-			}
-			fw.metrics.incPollerPublished(ctx)
-			mu.Lock()
-			ids = append(ids, ev.Metadata.Id)
-			mu.Unlock()
-		}()
+	if fw.directEmit && fw.pollerGracePeriod > 0 {
+		var cutoff ulid.ULID
+		_ = cutoff.SetTime(ulid.Timestamp(now.Add(-fw.pollerGracePeriod)))
+		query += " WHERE id < ?"
+		args = append(args, cutoff.String())
 	}
 
-	wg.Wait()
-	return ids
+	query += " ORDER BY id LIMIT ? FOR UPDATE SKIP LOCKED"
+	args = append(args, fw.pollerBatchSize)
+
+	return query, args
+}
+
+func (fw *DBForwarder) publishWithTimeout(ctx context.Context, event *events.SerializedEvent) error {
+	ctx, cancel := context.WithTimeout(ctx, fw.publishTimeout)
+	defer cancel()
+	return fw.emitEvent(ctx, event)
 }
 
 func (fw *DBForwarder) emitEvent(ctx context.Context, event *events.SerializedEvent) error {

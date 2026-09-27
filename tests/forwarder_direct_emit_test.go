@@ -10,8 +10,6 @@ import (
 	"github.com/jmoiron/sqlx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"github.com/vectrum-io/strongforce/pkg/db"
 	"github.com/vectrum-io/strongforce/pkg/db/mysql"
@@ -22,6 +20,8 @@ import (
 	"github.com/vectrum-io/strongforce/pkg/serialization"
 	"github.com/vectrum-io/strongforce/tests/mocks"
 	sharedtest "github.com/vectrum-io/strongforce/tests/shared"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/metric/metricdata"
 )
 
 // newTestMetrics wires the forwarder's OTel Metrics against a ManualReader so
@@ -243,7 +243,9 @@ func testDirectEmitFallbackOnBusError(t *testing.T, driver, tableName string) {
 		DirectEmit:      true,
 		DirectWorkers:   1,
 		DirectQueueSize: 4,
-		Metrics:         metrics,
+		// Short grace so the poller picks up the failed direct publish fast.
+		PollerGracePeriod: 50 * time.Millisecond,
+		Metrics:           metrics,
 	})
 	assert.NoError(t, err)
 	attachForwarder(t, d, fw)
@@ -293,7 +295,9 @@ func testDirectEmitDroppedGoesToPoller(t *testing.T, driver, tableName string) {
 		DirectEmit:      true,
 		DirectWorkers:   0, // no workers → every enqueue drops
 		DirectQueueSize: 0,
-		Metrics:         metrics,
+		// Short grace so the poller picks up the dropped event fast.
+		PollerGracePeriod: 50 * time.Millisecond,
+		Metrics:           metrics,
 	})
 	assert.NoError(t, err)
 	attachForwarder(t, d, fw)

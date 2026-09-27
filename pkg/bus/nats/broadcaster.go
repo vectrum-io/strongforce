@@ -48,11 +48,18 @@ func (nb *Broadcaster) Broadcast(ctx context.Context, message *bus.OutboundMessa
 		nb.otelPropagator.Inject(ctx, propagation.HeaderCarrier(headers))
 	}
 
+	opts := []nats.PubOpt{nats.MsgId(message.Id)}
+	// JetStream only accepts a publish context that carries a deadline;
+	// without one the connection's default wait applies.
+	if _, ok := ctx.Deadline(); ok {
+		opts = append(opts, nats.Context(ctx))
+	}
+
 	_, err := nb.jetStream.PublishMsg(&nats.Msg{
 		Header:  headers,
 		Subject: message.Subject,
 		Data:    message.Data,
-	}, nats.MsgId(message.Id))
+	}, opts...)
 
 	return err
 }
