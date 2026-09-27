@@ -12,6 +12,10 @@ const (
 	DefaultDirectWorkers          = 8
 	DefaultDirectQueueSize        = 1024
 	DefaultOutboxDepthSampleEvery = 10
+	DefaultPollerBatchSize        = 100
+	DefaultPollerGracePeriod      = 10 * time.Second
+	DefaultPollerMaxBackoff       = time.Minute
+	DefaultPublishTimeout         = 2 * time.Second
 )
 
 type Options struct {
@@ -30,8 +34,24 @@ type Options struct {
 	// full, events are dropped and left for the poller.
 	DirectQueueSize int
 	// OutboxDepthSampleEvery controls how often (in poller cycles) the
-	// outbox table depth is sampled into Metrics.OutboxDepth. Zero disables.
+	// outbox table depth and oldest row age are sampled into Metrics. Zero
+	// disables.
 	OutboxDepthSampleEvery int
+
+	// PollerBatchSize bounds how many rows one poll locks and publishes. A
+	// full batch triggers the next poll right away.
+	PollerBatchSize int
+	// PollerGracePeriod makes the poller skip rows younger than this, so it
+	// does not race the direct-emit workers on fresh events. It only applies
+	// with DirectEmit and relies on ULID event ids. Zero uses the default,
+	// negative disables it.
+	PollerGracePeriod time.Duration
+	// PollerMaxBackoff caps how far the polling interval grows while
+	// publishing keeps failing.
+	PollerMaxBackoff time.Duration
+	// PublishTimeout bounds every single publish, so an unreachable bus
+	// fails fast instead of holding the poller's row locks.
+	PublishTimeout time.Duration
 
 	// Metrics is optional. When nil the forwarder records nothing. Construct
 	// with NewMetrics(mp) to attach to an OpenTelemetry MeterProvider.
@@ -46,6 +66,10 @@ var DefaultOptions = &Options{
 	DirectWorkers:          DefaultDirectWorkers,
 	DirectQueueSize:        DefaultDirectQueueSize,
 	OutboxDepthSampleEvery: DefaultOutboxDepthSampleEvery,
+	PollerBatchSize:        DefaultPollerBatchSize,
+	PollerGracePeriod:      DefaultPollerGracePeriod,
+	PollerMaxBackoff:       DefaultPollerMaxBackoff,
+	PublishTimeout:         DefaultPublishTimeout,
 }
 
 func (o *Options) validate() error {
@@ -70,6 +94,25 @@ func (o *Options) validate() error {
 	}
 	if o.DirectQueueSize < 0 {
 		o.DirectQueueSize = 0
+	}
+
+	if o.PollerBatchSize <= 0 {
+		o.PollerBatchSize = DefaultPollerBatchSize
+	}
+
+	if o.PollerGracePeriod == 0 {
+		o.PollerGracePeriod = DefaultPollerGracePeriod
+	}
+
+	if o.PollerMaxBackoff <= 0 {
+		o.PollerMaxBackoff = DefaultPollerMaxBackoff
+	}
+	if o.PollerMaxBackoff < o.PollingInterval {
+		o.PollerMaxBackoff = o.PollingInterval
+	}
+
+	if o.PublishTimeout <= 0 {
+		o.PublishTimeout = DefaultPublishTimeout
 	}
 
 	return nil

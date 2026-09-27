@@ -28,6 +28,7 @@ type Metrics struct {
 	PollerFailed    metric.Int64Counter
 
 	OutboxDepth        metric.Int64Gauge
+	OutboxOldestAge    metric.Float64Gauge
 	EmitLatencySeconds metric.Float64Histogram
 }
 
@@ -99,6 +100,14 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 	if err != nil {
 		return nil, err
 	}
+	outboxOldestAge, err := meter.Float64Gauge(
+		"strongforce.forwarder.outbox.oldest_age",
+		metric.WithDescription("Age of the oldest row in the outbox table, sampled by the poller. Grows while events cannot be published."),
+		metric.WithUnit("s"),
+	)
+	if err != nil {
+		return nil, err
+	}
 	emitLatency, err := meter.Float64Histogram(
 		"strongforce.forwarder.emit.latency",
 		metric.WithDescription("Wall time from direct-emit enqueue to successful bus publish."),
@@ -121,6 +130,7 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 		PollerPublished:    pollerPublished,
 		PollerFailed:       pollerFailed,
 		OutboxDepth:        outboxDepth,
+		OutboxOldestAge:    outboxOldestAge,
 		EmitLatencySeconds: emitLatency,
 	}, nil
 }
@@ -174,6 +184,12 @@ func (m *Metrics) incPollerFailed(ctx context.Context) {
 func (m *Metrics) setOutboxDepth(ctx context.Context, v int64) {
 	if m != nil {
 		m.OutboxDepth.Record(ctx, v)
+	}
+}
+
+func (m *Metrics) setOutboxOldestAge(ctx context.Context, seconds float64) {
+	if m != nil {
+		m.OutboxOldestAge.Record(ctx, seconds)
 	}
 }
 
