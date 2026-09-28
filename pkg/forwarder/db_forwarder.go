@@ -41,6 +41,7 @@ type DBForwarder struct {
 	directQueue            chan directJob
 	outboxDepthSampleEvery int
 	pollerBatchSize        int
+	pollerBatchBudget      time.Duration
 	pollerGracePeriod      time.Duration
 	pollerMaxBackoff       time.Duration
 	publishTimeout         time.Duration
@@ -82,6 +83,7 @@ func New(db db.DB, bus bus.Bus, options *Options) (*DBForwarder, error) {
 		directQueue:            make(chan directJob, options.DirectQueueSize),
 		outboxDepthSampleEvery: options.OutboxDepthSampleEvery,
 		pollerBatchSize:        options.PollerBatchSize,
+		pollerBatchBudget:      options.PollerBatchBudget,
 		pollerGracePeriod:      options.PollerGracePeriod,
 		pollerMaxBackoff:       options.PollerMaxBackoff,
 		publishTimeout:         options.PublishTimeout,
@@ -149,7 +151,7 @@ func (fw *DBForwarder) nextPollDelay(previous time.Duration, result pollResult, 
 		return next
 	}
 
-	if result.batchFull {
+	if result.hasMore {
 		return 0
 	}
 
@@ -240,16 +242,21 @@ func (fw *DBForwarder) sampleOutbox(ctx context.Context) {
 }
 
 type pollResult struct {
-	batchFull bool
+	// hasMore is set when the poll may have left rows behind: its batch was
+	// full or it ran out of budget.
+	hasMore bool
 }
 
 // processEvents publishes one batch of outbox rows in id order. It locks only
 // the rows of the batch (READ COMMITTED takes no gap locks, so concurrent
 // inserts into the outbox never wait on the poller) and skips rows another
 // poller holds. It stops at the first failed publish, deletes the rows
-// published before it and returns the publish error.
+// published before it and returns the publish error. Once the batch budget is
+// spent it stops early too, so row locks are held for at most the budget plus
+// one PublishTimeout.
 func (fw *DBForwarder) processEvents(ctx context.Context) (pollResult, error) {
-	query, args := fw.pollQuery(time.Now())
+	start := time.Now()
+	query, args := fw.pollQuery(start)
 
 	tx, err := fw.db.Connection().BeginTxx(ctx, &sql.TxOptions{Isolation: sql.LevelReadCommitted})
 	if err != nil {
@@ -270,7 +277,14 @@ func (fw *DBForwarder) processEvents(ctx context.Context) (pollResult, error) {
 
 	publishedIds := make([]events.EventID, 0, len(eventRows))
 	var publishErr error
+	outOfBudget := false
 	for _, row := range eventRows {
+		// Always publish at least one row, so a slow bus still makes progress.
+		if len(publishedIds) > 0 && time.Since(start) >= fw.pollerBatchBudget {
+			outOfBudget = true
+			break
+		}
+
 		event, err := row.ToSerializedEvent()
 		if err != nil {
 			fw.logger.Error("failed to convert db entity to event spec: " + err.Error())
@@ -300,7 +314,7 @@ func (fw *DBForwarder) processEvents(ctx context.Context) (pollResult, error) {
 		return pollResult{}, fmt.Errorf("failed to commit poll transaction: %w", err)
 	}
 
-	return pollResult{batchFull: len(eventRows) == fw.pollerBatchSize}, publishErr
+	return pollResult{hasMore: outOfBudget || len(eventRows) == fw.pollerBatchSize}, publishErr
 }
 
 // pollQuery selects the next batch in id order. With direct emit, rows younger
