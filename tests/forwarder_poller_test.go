@@ -240,6 +240,42 @@ func TestPollerDrainsBacklogWithoutWaitingForInterval(t *testing.T) {
 	}
 }
 
+func TestPollerCommitsWhenBatchBudgetIsSpent(t *testing.T) {
+	for _, driver := range pollerDrivers {
+		t.Run(driver, func(t *testing.T) {
+			tableName := "event_outbox_poller_budget"
+			d := newPollerDB(t, driver, tableName)
+			b := &recordingBus{hook: func(ctx context.Context, message *bus.OutboundMessage) error {
+				time.Sleep(50 * time.Millisecond)
+				return nil
+			}}
+
+			ids := make([]string, 10)
+			for i := range ids {
+				ids[i] = fmt.Sprintf("row-%03d", i)
+			}
+			insertOutboxRows(t, d, tableName, ids...)
+
+			startForwarder(t, d, b, &forwarder.Options{
+				PollingInterval:   20 * time.Millisecond,
+				PollerBatchBudget: 120 * time.Millisecond,
+				Serializer:        serialization.NewJSONSerializer(),
+				OutboxTableName:   tableName,
+			})
+
+			// Published rows are deleted while later ones are still pending,
+			// so the first poll committed before publishing the whole batch.
+			assert.Eventually(t, func() bool {
+				remaining := len(outboxIds(t, d, tableName))
+				return remaining > 0 && remaining < len(ids)
+			}, 3*time.Second, 10*time.Millisecond)
+
+			assertOutboxEmpty(t, d, tableName, 5*time.Second)
+			assert.Equal(t, ids, b.publishedIds())
+		})
+	}
+}
+
 func TestConcurrentPollersPublishEachRowOnce(t *testing.T) {
 	for _, driver := range pollerDrivers {
 		t.Run(driver, func(t *testing.T) {

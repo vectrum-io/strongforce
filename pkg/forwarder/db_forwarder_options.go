@@ -13,6 +13,7 @@ const (
 	DefaultDirectQueueSize        = 1024
 	DefaultOutboxDepthSampleEvery = 10
 	DefaultPollerBatchSize        = 100
+	DefaultPollerBatchBudget      = 5 * time.Second
 	DefaultPollerGracePeriod      = 10 * time.Second
 	DefaultPollerMaxBackoff       = time.Minute
 	DefaultPublishTimeout         = 2 * time.Second
@@ -41,6 +42,10 @@ type Options struct {
 	// PollerBatchSize bounds how many rows one poll locks and publishes. A
 	// full batch triggers the next poll right away.
 	PollerBatchSize int
+	// PollerBatchBudget bounds how long one poll keeps publishing, and so how
+	// long it holds its row locks. Rows left over are picked up by the next
+	// poll right away. Rows are published one at a time to keep their order.
+	PollerBatchBudget time.Duration
 	// PollerGracePeriod makes the poller skip rows younger than this, so it
 	// does not race the direct-emit workers on fresh events. It only applies
 	// with DirectEmit and relies on ULID event ids. Zero uses the default,
@@ -67,6 +72,7 @@ var DefaultOptions = &Options{
 	DirectQueueSize:        DefaultDirectQueueSize,
 	OutboxDepthSampleEvery: DefaultOutboxDepthSampleEvery,
 	PollerBatchSize:        DefaultPollerBatchSize,
+	PollerBatchBudget:      DefaultPollerBatchBudget,
 	PollerGracePeriod:      DefaultPollerGracePeriod,
 	PollerMaxBackoff:       DefaultPollerMaxBackoff,
 	PublishTimeout:         DefaultPublishTimeout,
@@ -98,6 +104,10 @@ func (o *Options) validate() error {
 
 	if o.PollerBatchSize <= 0 {
 		o.PollerBatchSize = DefaultPollerBatchSize
+	}
+
+	if o.PollerBatchBudget <= 0 {
+		o.PollerBatchBudget = DefaultPollerBatchBudget
 	}
 
 	if o.PollerGracePeriod == 0 {

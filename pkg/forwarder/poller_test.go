@@ -46,10 +46,10 @@ func TestNextPollDelayBacksOffFromIntervalAfterDrain(t *testing.T) {
 	assert.Equal(t, time.Second, fw.nextPollDelay(0, pollResult{}, errors.New("bus down")))
 }
 
-func TestNextPollDelayPollsImmediatelyWhileBatchIsFull(t *testing.T) {
+func TestNextPollDelayPollsImmediatelyWhileRowsAreLeft(t *testing.T) {
 	fw := newPollerForwarder(t, &Options{PollingInterval: time.Second})
 
-	assert.Zero(t, fw.nextPollDelay(time.Second, pollResult{batchFull: true}, nil))
+	assert.Zero(t, fw.nextPollDelay(time.Second, pollResult{hasMore: true}, nil))
 }
 
 func TestPollQueryWithoutDirectEmitHasNoCutoff(t *testing.T) {
@@ -104,6 +104,7 @@ func TestOptionsDefaultPollerSettings(t *testing.T) {
 	assert.NoError(t, options.validate())
 
 	assert.Equal(t, DefaultPollerBatchSize, options.PollerBatchSize)
+	assert.Equal(t, DefaultPollerBatchBudget, options.PollerBatchBudget)
 	assert.Equal(t, DefaultPollerGracePeriod, options.PollerGracePeriod)
 	assert.Equal(t, DefaultPollerMaxBackoff, options.PollerMaxBackoff)
 	assert.Equal(t, DefaultPublishTimeout, options.PublishTimeout)
