@@ -76,10 +76,7 @@ func TestBusOrderSpamGuaranteed(t *testing.T) {
 	err := sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject)
 	assert.NoError(t, err)
 
-	natsBus, err := nats.New(&nats.Options{
-		NATSAddress: sharedtest.NATS,
-	})
-	assert.NoError(t, err)
+	natsBus := newMigratedBus(t)
 
 	subscription, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName,
 		bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
@@ -121,10 +118,7 @@ func TestBusConcurrentSpam(t *testing.T) {
 	err := sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject)
 	assert.NoError(t, err)
 
-	natsBus, err := nats.New(&nats.Options{
-		NATSAddress: sharedtest.NATS,
-	})
-	assert.NoError(t, err)
+	natsBus := newMigratedBus(t)
 
 	subscription, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName,
 		bus.WithFilterSubject(subject))
@@ -174,10 +168,7 @@ func TestBusOrderConsumerNak(t *testing.T) {
 	err := sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject)
 	assert.NoError(t, err)
 
-	natsBus, err := nats.New(&nats.Options{
-		NATSAddress: sharedtest.NATS,
-	})
-	assert.NoError(t, err)
+	natsBus := newMigratedBus(t)
 
 	subscriptionA, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
 	assert.NoError(t, err)
@@ -225,10 +216,7 @@ func TestContextPropagation(t *testing.T) {
 	err := sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject)
 	assert.NoError(t, err)
 
-	natsBus, err := nats.New(&nats.Options{
-		NATSAddress: sharedtest.NATS,
-	})
-	assert.NoError(t, err)
+	natsBus := newMigratedBus(t)
 
 	type testCtxKey struct{}
 
@@ -260,10 +248,7 @@ func TestSubscribeContextCancelation(t *testing.T) {
 	err := sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject)
 	assert.NoError(t, err)
 
-	natsBus, err := nats.New(&nats.Options{
-		NATSAddress: sharedtest.NATS,
-	})
-	assert.NoError(t, err)
+	natsBus := newMigratedBus(t)
 
 	subscription, err := natsBus.Subscribe(context.Background(), streamName+"-"+subject, streamName, bus.WithFilterSubject(subject), bus.WithGuaranteeOrder())
 	assert.NoError(t, err)
@@ -488,15 +473,19 @@ func TestBusDropsExhaustedMessageWhenConfigured(t *testing.T) {
 	assert.ErrorIs(t, err, nats2.ErrMsgNotFound)
 }
 
-func TestBusUnroutableMessageDoesNotBlockOrderedConsumer(t *testing.T) {
+func TestBusDeadLettersUnroutableMessageAndContinuesInOrder(t *testing.T) {
 	streamName := "test-unroutable"
-	consumerName := streamName + "-consumer"
+	// Unique per run: dead letters are deduplicated by stream sequence, which
+	// restarts at 1 whenever the test recreates the stream.
+	consumerName := fmt.Sprintf("%s-%d", streamName, time.Now().UnixNano())
 
 	assert.NoError(t, sharedtest.CreateNatsStream(sharedtest.NATS, streamName, "unroutable.>"))
 	natsBus := newMigratedBus(t)
+	dlqSubject := nats.DeadLetterSubject(streamName, consumerName)
+	js := purgeDeadLetters(t, dlqSubject)
 
 	subscription, err := natsBus.Subscribe(context.Background(), consumerName, streamName,
-		bus.WithFilterSubject("unroutable.>"), bus.WithGuaranteeOrder())
+		bus.WithFilterSubject("unroutable.>"), bus.WithGuaranteeOrder(), bus.WithRetryPolicy(fastRetryPolicy))
 	assert.NoError(t, err)
 
 	received := make(chan string, 10)
@@ -512,7 +501,47 @@ func TestBusUnroutableMessageDoesNotBlockOrderedConsumer(t *testing.T) {
 	select {
 	case data := <-received:
 		assert.Equal(t, "handled", data)
-	case <-time.After(2 * time.Second):
+	case <-time.After(10 * time.Second):
 		t.Fatal("unroutable message blocked the ordered consumer")
+	}
+
+	deadLetter, err := js.GetLastMsg(nats.DeadLetterStreamName, dlqSubject)
+	if assert.NoError(t, err) {
+		assert.Equal(t, "ignored", string(deadLetter.Data))
+		assert.Contains(t, deadLetter.Header.Get(nats.DeadLetterHeaderError), bus.ErrMessageNotRoutable.Error())
+	}
+}
+
+func TestBusRetriesMessageThatArrivesBeforeItsHandler(t *testing.T) {
+	streamName := "test-late-handler"
+	subject := "test-late-handler-subject"
+	consumerName := fmt.Sprintf("%s-%d", streamName, time.Now().UnixNano())
+
+	assert.NoError(t, sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject))
+	natsBus := newMigratedBus(t)
+
+	subscription, err := natsBus.Subscribe(context.Background(), consumerName, streamName,
+		bus.WithFilterSubject(subject), bus.WithGuaranteeOrder(), bus.WithRetryPolicy(bus.RetryPolicy{
+			MaxAttempts:  20,
+			InitialDelay: 50 * time.Millisecond,
+			MaxDelay:     50 * time.Millisecond,
+		}))
+	assert.NoError(t, err)
+
+	publishNumbered(t, natsBus, subject, "early")
+	subscription.Start(context.Background())
+	time.Sleep(200 * time.Millisecond)
+
+	received := make(chan string, 1)
+	assert.NoError(t, subscription.AddHandler(subject, func(ctx context.Context, message bus.InboundMessage) error {
+		received <- string(message.Data)
+		return nil
+	}))
+
+	select {
+	case data := <-received:
+		assert.Equal(t, "early", data)
+	case <-time.After(5 * time.Second):
+		t.Fatal("message that arrived before its handler was lost")
 	}
 }

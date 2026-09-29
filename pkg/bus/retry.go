@@ -22,6 +22,8 @@ var DefaultRetryPolicy = RetryPolicy{
 // WithDropOnExhaustion.
 type RetryPolicy struct {
 	// MaxAttempts is the total number of deliveries, including the first one.
+	// Zero uses the default; a negative value retries without limit, so only
+	// Permanent errors are dead-lettered.
 	MaxAttempts int
 	// InitialDelay is the redelivery delay after the first failed delivery.
 	InitialDelay time.Duration
@@ -29,14 +31,18 @@ type RetryPolicy struct {
 	MaxDelay time.Duration
 	// Multiplier grows the delay after every failed delivery.
 	Multiplier float64
-	// Jitter randomizes each delay by ±Jitter (0.2 = ±20%). Zero disables it.
+	// Jitter randomizes each delay by ±Jitter (0.2 = ±20%). Zero uses the
+	// default; a negative value disables it.
 	Jitter float64
 }
 
 // normalize fills unset fields from DefaultRetryPolicy.
 func (p RetryPolicy) normalize() RetryPolicy {
-	if p.MaxAttempts < 1 {
+	if p.MaxAttempts == 0 {
 		p.MaxAttempts = DefaultRetryPolicy.MaxAttempts
+	}
+	if p.MaxAttempts < 0 {
+		p.MaxAttempts = -1
 	}
 	if p.InitialDelay <= 0 {
 		p.InitialDelay = DefaultRetryPolicy.InitialDelay
@@ -50,6 +56,9 @@ func (p RetryPolicy) normalize() RetryPolicy {
 	if p.Multiplier < 1 {
 		p.Multiplier = DefaultRetryPolicy.Multiplier
 	}
+	if p.Jitter == 0 {
+		p.Jitter = DefaultRetryPolicy.Jitter
+	}
 	if p.Jitter < 0 {
 		p.Jitter = 0
 	}
@@ -62,7 +71,12 @@ func (p RetryPolicy) normalize() RetryPolicy {
 // IsExhausted reports whether a message that failed on its numDelivered-th
 // delivery has no attempts left.
 func (p RetryPolicy) IsExhausted(numDelivered uint64) bool {
-	return numDelivered >= uint64(p.MaxAttempts)
+	return !p.IsUnlimited() && numDelivered >= uint64(p.MaxAttempts)
+}
+
+// IsUnlimited reports whether messages are retried without an attempt limit.
+func (p RetryPolicy) IsUnlimited() bool {
+	return p.MaxAttempts < 0
 }
 
 // Delay returns the redelivery delay after the numDelivered-th delivery failed.

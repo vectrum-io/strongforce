@@ -41,6 +41,9 @@ type SubscriptionSettings struct {
 	// Stream and Consumer label logs and metrics.
 	Stream   string
 	Consumer string
+	// NoRedelivery marks messages the broker cannot redeliver, e.g. core NATS
+	// broadcasts: failed messages are reported and dropped instead of retried.
+	NoRedelivery bool
 }
 
 type Subscription struct {
@@ -58,6 +61,7 @@ type Subscription struct {
 	logger          *zap.SugaredLogger
 	stream          string
 	consumer        string
+	noRedelivery    bool
 }
 
 // NewSubscription builds a subscription that dispatches inbound messages to
@@ -91,8 +95,9 @@ func NewSubscriptionWithSettings(inboundMessages chan InboundMessage, settings S
 			"stream", settings.Stream,
 			"consumer", settings.Consumer,
 		),
-		stream:   settings.Stream,
-		consumer: settings.Consumer,
+		stream:       settings.Stream,
+		consumer:     settings.Consumer,
+		noRedelivery: settings.NoRedelivery,
 	}
 }
 
@@ -160,14 +165,14 @@ func (s *Subscription) runWorker(ctx context.Context) {
 
 func (s *Subscription) handleMessage(message InboundMessage) {
 	message.deserializer = s.deserializer
-	ctx := message.MessageCtx
-	if ctx == nil {
-		ctx = context.Background()
+	if message.MessageCtx == nil {
+		message.MessageCtx = context.Background()
 	}
+	ctx := message.MessageCtx
 
 	// Only reachable when a handler kept exceeding AckWait, since failed
 	// handlers are settled explicitly below.
-	if s.retryPolicy.MaxAttempts > 0 && message.Delivery.NumDelivered > uint64(s.retryPolicy.MaxAttempts) {
+	if !s.retryPolicy.IsUnlimited() && message.Delivery.NumDelivered > uint64(s.retryPolicy.MaxAttempts) {
 		s.exhaust(ctx, message, ErrDeliveryLimitExceeded)
 		return
 	}
@@ -184,17 +189,17 @@ func (s *Subscription) handleMessage(message InboundMessage) {
 
 		isMessageRouted = true
 
-		if err := invokeHandler(message.MessageCtx, fn, message); err != nil {
+		if err := invokeHandler(ctx, fn, message); err != nil {
 			handlerErrors = append(handlerErrors, err)
 		}
 	}
 	s.handlersMu.RUnlock()
 
+	// A message without a matching handler is retried like a failed one, so
+	// it is not lost while handlers are still being registered, and is
+	// dead-lettered once its attempts are used up.
 	if !isMessageRouted {
-		s.logger.Warnf("acking message without a matching handler: %s", message.Subject)
-		if s.ack(message) {
-			s.metrics.recordOutcome(ctx, s.stream, s.consumer, OutcomeUnroutable)
-		}
+		s.settleFailure(ctx, message, fmt.Errorf("%w: %s", ErrMessageNotRoutable, message.Subject))
 		return
 	}
 
@@ -207,16 +212,27 @@ func (s *Subscription) handleMessage(message InboundMessage) {
 		return
 	}
 
-	handlerErr := fmt.Errorf("%w: %w", ErrMessageHandlerFailed, errors.Join(handlerErrors...))
-	s.reportError(handlerErr)
+	s.settleFailure(ctx, message, fmt.Errorf("%w: %w", ErrMessageHandlerFailed, errors.Join(handlerErrors...)))
+}
 
-	if IsPermanent(handlerErr) || s.retryPolicy.IsExhausted(message.Delivery.NumDelivered) {
-		s.exhaust(ctx, message, handlerErr)
+// settleFailure reports err and naks the message for a retry, or exhausts it
+// when err is Permanent or the message has no attempts left.
+func (s *Subscription) settleFailure(ctx context.Context, message InboundMessage, err error) {
+	s.reportError(err)
+
+	if s.noRedelivery {
+		s.logger.Warnf("dropping message %s (%s) that cannot be redelivered: %s", message.Id, message.Subject, err)
+		s.metrics.recordOutcome(ctx, s.stream, s.consumer, OutcomeDropped)
 		return
 	}
 
-	if err := message.Nak(s.retryPolicy.Delay(message.Delivery.NumDelivered)); err != nil {
-		s.reportError(fmt.Errorf("%w: failed to nak message: %w", ErrMessageHandlerFailed, err))
+	if IsPermanent(err) || s.retryPolicy.IsExhausted(message.Delivery.NumDelivered) {
+		s.exhaust(ctx, message, err)
+		return
+	}
+
+	if nakErr := message.Nak(s.retryPolicy.Delay(message.Delivery.NumDelivered)); nakErr != nil {
+		s.reportError(fmt.Errorf("%w: failed to nak message: %w", ErrMessageHandlerFailed, nakErr))
 	}
 	s.metrics.recordOutcome(ctx, s.stream, s.consumer, OutcomeRetried)
 }

@@ -80,6 +80,7 @@ var testRetryPolicy = RetryPolicy{
 	InitialDelay: time.Second,
 	MaxDelay:     10 * time.Second,
 	Multiplier:   2,
+	Jitter:       -1,
 }
 
 func newSettleSubscription(deadLetter DeadLetterFunc) *Subscription {
@@ -226,7 +227,7 @@ func TestSettleDeadLettersWithoutRunningHandlersPastDeliveryLimit(t *testing.T) 
 	}
 }
 
-func TestSettleAcksMessageWithoutMatchingHandler(t *testing.T) {
+func TestSettleRetriesMessageWithoutMatchingHandler(t *testing.T) {
 	dl := &deadLetterRecorder{}
 	sub := newSettleSubscription(dl.deadLetter)
 	assert.NoError(t, sub.AddHandler("incidents.v1.created", func(ctx context.Context, message InboundMessage) error {
@@ -242,10 +243,50 @@ func TestSettleAcksMessageWithoutMatchingHandler(t *testing.T) {
 	sub.handleMessage(message)
 
 	acks, terms, nakDelays := recorder.settled()
-	assert.Equal(t, 1, acks)
+	assert.Zero(t, acks)
 	assert.Zero(t, terms)
+	assert.Equal(t, []time.Duration{time.Second}, nakDelays)
+	if assert.Len(t, reported, 1) {
+		assert.ErrorIs(t, reported[0], ErrMessageNotRoutable)
+	}
+	assert.Empty(t, dl.calls)
+}
+
+func TestSettleDeadLettersUnroutableMessageOnLastAttempt(t *testing.T) {
+	dl := &deadLetterRecorder{}
+	sub := newSettleSubscription(dl.deadLetter)
+
+	message, recorder := newRecordedMessage("incidents.v1.api_token_created", 3)
+	sub.handleMessage(message)
+
+	acks, terms, nakDelays := recorder.settled()
+	assert.Zero(t, acks)
+	assert.Equal(t, 1, terms)
 	assert.Empty(t, nakDelays)
-	assert.Empty(t, reported)
+	if assert.Len(t, dl.calls, 1) {
+		assert.ErrorIs(t, dl.calls[0].cause, ErrMessageNotRoutable)
+	}
+}
+
+func TestSettleRetriesWithoutLimitWhenMaxAttemptsIsNegative(t *testing.T) {
+	dl := &deadLetterRecorder{}
+	policy := testRetryPolicy
+	policy.MaxAttempts = -1
+	sub := NewSubscriptionWithSettings(make(chan InboundMessage), SubscriptionSettings{
+		RetryPolicy: policy,
+		DeadLetter:  dl.deadLetter,
+	})
+	assert.NoError(t, sub.AddHandler("incidents.>", func(ctx context.Context, message InboundMessage) error {
+		return errors.New("downstream unavailable")
+	}))
+
+	message, recorder := newRecordedMessage("incidents.v1.created", 50)
+	sub.handleMessage(message)
+
+	acks, terms, nakDelays := recorder.settled()
+	assert.Zero(t, acks)
+	assert.Zero(t, terms)
+	assert.Equal(t, []time.Duration{testRetryPolicy.MaxDelay}, nakDelays)
 	assert.Empty(t, dl.calls)
 }
 
@@ -279,4 +320,48 @@ func TestSettleRetriesWhenAnyOfSeveralHandlersFails(t *testing.T) {
 	acks, _, nakDelays := recorder.settled()
 	assert.Zero(t, acks)
 	assert.Equal(t, []time.Duration{time.Second}, nakDelays)
+}
+
+func TestSettleDropsFailedMessageThatCannotBeRedelivered(t *testing.T) {
+	dl := &deadLetterRecorder{}
+	sub := NewSubscriptionWithSettings(make(chan InboundMessage), SubscriptionSettings{
+		RetryPolicy:  testRetryPolicy,
+		DeadLetter:   dl.deadLetter,
+		NoRedelivery: true,
+	})
+	assert.NoError(t, sub.AddHandler("broadcast.>", func(ctx context.Context, message InboundMessage) error {
+		return errors.New("downstream unavailable")
+	}))
+
+	var reported []error
+	sub.OnError(func(err error) {
+		reported = append(reported, err)
+	})
+
+	message, recorder := newRecordedMessage("broadcast.ping", 0)
+	sub.handleMessage(message)
+
+	acks, terms, nakDelays := recorder.settled()
+	assert.Zero(t, acks)
+	assert.Zero(t, terms)
+	assert.Empty(t, nakDelays)
+	assert.Empty(t, dl.calls)
+	assert.Len(t, reported, 1)
+}
+
+func TestHandlerGetsBackgroundContextWhenMessageHasNone(t *testing.T) {
+	sub := newSettleSubscription(nil)
+	var handlerCtx, messageCtx context.Context
+	assert.NoError(t, sub.AddHandler("incidents.>", func(ctx context.Context, message InboundMessage) error {
+		handlerCtx = ctx
+		messageCtx = message.MessageCtx
+		return nil
+	}))
+
+	message, _ := newRecordedMessage("incidents.v1.created", 1)
+	message.MessageCtx = nil
+	sub.handleMessage(message)
+
+	assert.NotNil(t, handlerCtx)
+	assert.NotNil(t, messageCtx)
 }

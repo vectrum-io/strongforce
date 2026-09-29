@@ -15,6 +15,7 @@ func TestRetryPolicyDelayDoublesUntilCap(t *testing.T) {
 		InitialDelay: time.Second,
 		MaxDelay:     time.Minute,
 		Multiplier:   2,
+		Jitter:       -1,
 	}.normalize()
 
 	expected := []time.Duration{
@@ -33,7 +34,7 @@ func TestRetryPolicyDelayDoublesUntilCap(t *testing.T) {
 }
 
 func TestRetryPolicyDelayTreatsUntrackedDeliveryAsFirst(t *testing.T) {
-	policy := RetryPolicy{InitialDelay: 3 * time.Second, Multiplier: 2}.normalize()
+	policy := RetryPolicy{InitialDelay: 3 * time.Second, Multiplier: 2, Jitter: -1}.normalize()
 
 	assert.Equal(t, 3*time.Second, policy.Delay(0))
 }
@@ -60,12 +61,18 @@ func TestRetryPolicyNormalizeFillsDefaults(t *testing.T) {
 	assert.Equal(t, DefaultRetryPolicy.InitialDelay, policy.InitialDelay)
 	assert.Equal(t, DefaultRetryPolicy.MaxDelay, policy.MaxDelay)
 	assert.Equal(t, DefaultRetryPolicy.Multiplier, policy.Multiplier)
+	assert.Equal(t, DefaultRetryPolicy.Jitter, policy.Jitter)
+}
+
+func TestRetryPolicyNegativeJitterDisablesIt(t *testing.T) {
+	policy := RetryPolicy{InitialDelay: time.Second, Jitter: -1}.normalize()
+
 	assert.Zero(t, policy.Jitter)
+	assert.Equal(t, time.Second, policy.Delay(1))
 }
 
 func TestRetryPolicyNormalizeClampsInvalidValues(t *testing.T) {
 	policy := RetryPolicy{
-		MaxAttempts:  -3,
 		InitialDelay: time.Minute,
 		MaxDelay:     time.Second,
 		Multiplier:   0.5,
@@ -76,6 +83,14 @@ func TestRetryPolicyNormalizeClampsInvalidValues(t *testing.T) {
 	assert.Equal(t, time.Minute, policy.MaxDelay)
 	assert.Equal(t, DefaultRetryPolicy.Multiplier, policy.Multiplier)
 	assert.Equal(t, 1.0, policy.Jitter)
+}
+
+func TestRetryPolicyNegativeMaxAttemptsIsUnlimited(t *testing.T) {
+	policy := RetryPolicy{MaxAttempts: -3}.normalize()
+
+	assert.True(t, policy.IsUnlimited())
+	assert.False(t, policy.IsExhausted(1))
+	assert.False(t, policy.IsExhausted(1_000_000))
 }
 
 func TestRetryPolicyIsExhaustedOnLastAttempt(t *testing.T) {
