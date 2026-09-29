@@ -20,7 +20,6 @@ const (
 	OutcomeDeadLettered     Outcome = "dead_lettered"
 	OutcomeDeadLetterFailed Outcome = "dead_letter_failed"
 	OutcomeDropped          Outcome = "dropped"
-	OutcomeUnroutable       Outcome = "unroutable"
 )
 
 // Metrics holds the OpenTelemetry instruments recorded by subscriptions. A nil
@@ -39,7 +38,7 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 
 	messages, err := meter.Int64Counter(
 		"strongforce.bus.messages",
-		metric.WithDescription("Inbound messages by how the subscription settled them (acked, retried, dead_lettered, dead_letter_failed, dropped, unroutable)."),
+		metric.WithDescription("Inbound messages by how the subscription settled them (acked, retried, dead_lettered, dead_letter_failed, dropped)."),
 	)
 	if err != nil {
 		return nil, err

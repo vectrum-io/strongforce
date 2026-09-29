@@ -28,7 +28,9 @@ const (
 	deadLetterPublishTimeout = 10 * time.Second
 )
 
-// DeadLetterOptions configures the shared dead-letter stream.
+// DeadLetterOptions configures the shared dead-letter stream. Every service
+// migrates the same stream, so a field left zero keeps the stream's current
+// value and only falls back to its default when the stream is created.
 type DeadLetterOptions struct {
 	// MaxAge bounds how long dead letters are kept. Defaults to 30 days.
 	MaxAge time.Duration
@@ -39,15 +41,32 @@ type DeadLetterOptions struct {
 	Replicas int
 }
 
-func (o DeadLetterOptions) streamConfig() nats.StreamConfig {
+// streamConfig builds the dead-letter stream config. existing is the config of
+// the stream already on the server, or nil when it is about to be created.
+func (o DeadLetterOptions) streamConfig(existing *nats.StreamConfig) nats.StreamConfig {
 	maxAge := o.MaxAge
-	if maxAge <= 0 {
-		maxAge = 30 * 24 * time.Hour
-	}
 	maxBytes := o.MaxBytes
-	if maxBytes <= 0 {
-		maxBytes = 1024 * 1024 * 1024
+	replicas := o.Replicas
+
+	if existing != nil {
+		if maxAge <= 0 {
+			maxAge = existing.MaxAge
+		}
+		if maxBytes <= 0 {
+			maxBytes = existing.MaxBytes
+		}
+		if replicas <= 0 {
+			replicas = existing.Replicas
+		}
+	} else {
+		if maxAge <= 0 {
+			maxAge = 30 * 24 * time.Hour
+		}
+		if maxBytes <= 0 {
+			maxBytes = 1024 * 1024 * 1024
+		}
 	}
+
 	return nats.StreamConfig{
 		Name:        DeadLetterStreamName,
 		Description: "messages that exhausted their retries, keyed by origin stream and consumer",
@@ -58,7 +77,7 @@ func (o DeadLetterOptions) streamConfig() nats.StreamConfig {
 		MaxAge:      maxAge,
 		Discard:     nats.DiscardOld,
 		Storage:     nats.FileStorage,
-		Replicas:    o.Replicas,
+		Replicas:    replicas,
 		Duplicates:  2 * time.Minute,
 	}
 }

@@ -155,9 +155,15 @@ func (ns *Subscriber) SubscribeBroadcast(ctx context.Context, subject string, op
 	// purely about handler parallelism. Default to single-goroutine — broadcast
 	// callers historically expected sequential handling and they aren't the
 	// throughput-critical path.
-	return bus.NewSubscription(msgChan, 1, opts.Deserializer, func() {
-		_ = subscription.Drain()
-		_ = subscription.Unsubscribe()
+	return bus.NewSubscriptionWithSettings(msgChan, bus.SubscriptionSettings{
+		Concurrency:  1,
+		Deserializer: opts.Deserializer,
+		Unsubscribe: func() {
+			_ = subscription.Drain()
+			_ = subscription.Unsubscribe()
+		},
+		Stream:       subject,
+		NoRedelivery: true,
 	}), nil
 }
 
@@ -227,7 +233,7 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 }
 
 // handleNATSMessage forwards a core NATS message. Core NATS has no delivery
-// tracking, so settling it is a no-op.
+// tracking, so settling it is a no-op; the subscription drops failed messages.
 func (ns *Subscriber) handleNATSMessage(parentCtx context.Context, msg *nats.Msg, msgChan chan bus.InboundMessage) {
 	msgChan <- bus.InboundMessage{
 		MessageCtx: ns.getMessageCtx(parentCtx, msg.Header),

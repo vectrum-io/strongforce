@@ -238,7 +238,7 @@ func TestErrorCallbackHandlersFailed(t *testing.T) {
 	msg.AssertExpectations(t)
 }
 
-func TestNotRoutableMessageIsAckedWithoutError(t *testing.T) {
+func TestNotRoutableMessageIsRetriedAndReported(t *testing.T) {
 	mockCtx := &mockContext{}
 	mockChan := make(chan InboundMessage, 256)
 
@@ -251,11 +251,13 @@ func TestNotRoutableMessageIsAckedWithoutError(t *testing.T) {
 	sub.Start(context.Background())
 
 	msg := createMockMessage("1", "test.wow")
-	msg.On("Ack").Once().Return(nil)
+	msg.On("Nak", mock.Anything).Once().Return(nil)
 	mockChan <- *msg.msg
 
 	msg.WaitUntilProcessed()
 
-	assert.Empty(t, subErrors)
+	if assert.Len(t, subErrors, 1) {
+		assert.ErrorIs(t, subErrors[0], ErrMessageNotRoutable)
+	}
 	msg.AssertExpectations(t)
 }

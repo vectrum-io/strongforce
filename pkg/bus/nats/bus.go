@@ -98,6 +98,11 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 
 	var deadLetter bus.DeadLetterFunc
 	if !subscriptionOptions.DropOnExhaustion {
+		// Without the stream every exhausted message would be retried
+		// forever, so refuse to subscribe instead.
+		if _, err := b.subscriber.jetStream.Stream(ctx, DeadLetterStreamName); err != nil {
+			return nil, fmt.Errorf("dead-letter stream %q is not available (run Migrate or subscribe WithDropOnExhaustion): %w", DeadLetterStreamName, err)
+		}
 		deadLetter = b.broadcaster.PublishDeadLetter
 	}
 
@@ -115,7 +120,7 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		Concurrency:     concurrency,
 		AckWait:         subscriptionOptions.AckWait,
 		Deserializer:    subscriptionOptions.Deserializer,
-		RetryPolicy:     subscriptionOptions.RetryPolicy,
+		RetryPolicy:     subscriptionOptions.EffectiveRetryPolicy(),
 		DeadLetter:      deadLetter,
 		Metrics:         b.options.Metrics,
 		Logger:          b.options.Logger,
@@ -138,7 +143,7 @@ func (b *Bus) Migrate(ctx context.Context) error {
 		return fmt.Errorf("failed to get jetstream context: %w", err)
 	}
 
-	streams := append([]nats.StreamConfig{b.options.DeadLetter.streamConfig()}, b.options.Streams...)
+	streams := append([]nats.StreamConfig{b.options.DeadLetter.streamConfig(nil)}, b.options.Streams...)
 
 	for _, streamConfig := range streams {
 		b.logger.Infof("validating nats stream %s", streamConfig.Name)
@@ -156,10 +161,10 @@ func (b *Bus) Migrate(ctx context.Context) error {
 			continue
 		}
 
-		// The dead-letter stream is shared by every service; one that does not
-		// configure replicas must not scale it down.
-		if streamConfig.Name == DeadLetterStreamName && streamConfig.Replicas == 0 {
-			streamConfig.Replicas = info.Config.Replicas
+		// The dead-letter stream is shared by every service; one must not
+		// reset limits it does not configure itself.
+		if streamConfig.Name == DeadLetterStreamName {
+			streamConfig = b.options.DeadLetter.streamConfig(&info.Config)
 		}
 
 		b.logger.Infof("updating existing stream %s", streamConfig.Name)

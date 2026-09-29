@@ -27,6 +27,10 @@ type SubscriptionOptions struct {
 	GuaranteeOrder bool
 	// RetryPolicy controls redelivery of messages whose handler failed.
 	RetryPolicy RetryPolicy
+	// MaxDeliveryTries overrides RetryPolicy.MaxAttempts when non-zero.
+	//
+	// Deprecated: use RetryPolicy.MaxAttempts or WithMaxDeliveryTries.
+	MaxDeliveryTries int
 	// DropOnExhaustion drops messages that used up all attempts instead of
 	// dead-lettering them.
 	DropOnExhaustion bool
@@ -75,8 +79,19 @@ func WithGuaranteeOrder() SubscribeOption {
 	}
 }
 
+// EffectiveRetryPolicy is RetryPolicy with the deprecated MaxDeliveryTries
+// applied.
+func (o SubscriptionOptions) EffectiveRetryPolicy() RetryPolicy {
+	policy := o.RetryPolicy
+	if o.MaxDeliveryTries != 0 {
+		policy.MaxAttempts = o.MaxDeliveryTries
+	}
+	return policy
+}
+
 // WithMaxDeliveryTries sets the total number of deliveries (RetryPolicy.MaxAttempts)
-// before a message is dead-lettered or dropped.
+// before a message is dead-lettered or dropped. A negative value retries
+// without limit.
 func WithMaxDeliveryTries(maxTries int) SubscribeOption {
 	return func(options *SubscriptionOptions) {
 		options.RetryPolicy.MaxAttempts = maxTries
