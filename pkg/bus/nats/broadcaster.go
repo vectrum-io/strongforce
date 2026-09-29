@@ -6,7 +6,11 @@ import (
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"go.opentelemetry.io/otel/propagation"
 	"go.uber.org/zap"
+	"time"
 )
+
+// defaultPublishWait matches the JetStream context's default publish wait.
+const defaultPublishWait = 5 * time.Second
 
 type Broadcaster struct {
 	jetStream      nats.JetStreamContext
@@ -48,18 +52,19 @@ func (nb *Broadcaster) Broadcast(ctx context.Context, message *bus.OutboundMessa
 		nb.otelPropagator.Inject(ctx, propagation.HeaderCarrier(headers))
 	}
 
-	opts := []nats.PubOpt{nats.MsgId(message.Id)}
-	// JetStream only accepts a publish context that carries a deadline;
-	// without one the connection's default wait applies.
-	if _, ok := ctx.Deadline(); ok {
-		opts = append(opts, nats.Context(ctx))
+	// A publish with a context waits until the context ends, so one without a
+	// deadline gets the wait a publish without a context would have.
+	if _, ok := ctx.Deadline(); !ok {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, defaultPublishWait)
+		defer cancel()
 	}
 
 	_, err := nb.jetStream.PublishMsg(&nats.Msg{
 		Header:  headers,
 		Subject: message.Subject,
 		Data:    message.Data,
-	}, opts...)
+	}, nats.MsgId(message.Id), nats.Context(ctx))
 
 	return err
 }

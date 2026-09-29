@@ -1,37 +1,61 @@
 package nats
 
 import (
+	"errors"
+	"strings"
 	"testing"
-	"time"
+	"unicode/utf8"
 
-	"github.com/nats-io/nats.go"
 	"github.com/stretchr/testify/assert"
+	"github.com/vectrum-io/strongforce/pkg/bus"
 )
 
-func TestDeadLetterStreamConfigUsesDefaultsOnCreate(t *testing.T) {
-	config := DeadLetterOptions{}.streamConfig(nil)
+func TestDeadLetterHeaders(t *testing.T) {
+	message := bus.InboundMessage{
+		Id:      "msg-1",
+		Subject: "incidents.v1.created",
+		Headers: map[string][]string{
+			"Traceparent": {"00-trace"},
+			"Nats-Msg-Id": {"msg-1"},
+		},
+		Delivery: bus.DeliveryInfo{Stream: "incidents", Consumer: "notifications", StreamSequence: 7, NumDelivered: 3},
+	}
 
-	assert.Equal(t, 30*24*time.Hour, config.MaxAge)
-	assert.Equal(t, int64(1024*1024*1024), config.MaxBytes)
-	assert.Zero(t, config.Replicas)
+	t.Run("keeps the message headers except the NATS ones and adds the failure", func(t *testing.T) {
+		headers := deadLetterHeaders(message, errors.New("downstream unavailable"))
+
+		assert.Equal(t, "00-trace", headers.Get("Traceparent"))
+		assert.Empty(t, headers.Get("Nats-Msg-Id"))
+		assert.Equal(t, "downstream unavailable", headers.Get(DeadLetterHeaderError))
+		assert.Equal(t, "incidents", headers.Get(DeadLetterHeaderStream))
+		assert.Equal(t, "notifications", headers.Get(DeadLetterHeaderConsumer))
+		assert.Equal(t, "7", headers.Get(DeadLetterHeaderStreamSequence))
+		assert.Equal(t, "3", headers.Get(DeadLetterHeaderNumDelivered))
+	})
+
+	t.Run("records an unknown cause when none is given", func(t *testing.T) {
+		headers := deadLetterHeaders(message, nil)
+
+		assert.Equal(t, "unknown", headers.Get(DeadLetterHeaderError))
+	})
 }
 
-func TestDeadLetterStreamConfigKeepsExistingValuesForUnsetFields(t *testing.T) {
-	existing := &nats.StreamConfig{MaxAge: 90 * 24 * time.Hour, MaxBytes: 10 << 30, Replicas: 3}
+func TestSanitizeHeaderValue(t *testing.T) {
+	t.Run("replaces line breaks", func(t *testing.T) {
+		assert.Equal(t, "panic | goroutine 1 |  frame", sanitizeHeaderValue("panic\ngoroutine 1\r\n frame"))
+	})
 
-	config := DeadLetterOptions{}.streamConfig(existing)
+	t.Run("truncates long values on a rune boundary", func(t *testing.T) {
+		value := strings.Repeat("a", maxDeadLetterErrorLength-1) + "ü" + "tail"
 
-	assert.Equal(t, 90*24*time.Hour, config.MaxAge)
-	assert.Equal(t, int64(10<<30), config.MaxBytes)
-	assert.Equal(t, 3, config.Replicas)
-}
+		sanitized := sanitizeHeaderValue(value)
 
-func TestDeadLetterStreamConfigAppliesConfiguredFieldsOnUpdate(t *testing.T) {
-	existing := &nats.StreamConfig{MaxAge: 90 * 24 * time.Hour, MaxBytes: 10 << 30, Replicas: 3}
+		assert.True(t, utf8.ValidString(sanitized))
+		assert.LessOrEqual(t, len(sanitized), maxDeadLetterErrorLength)
+		assert.Equal(t, strings.Repeat("a", maxDeadLetterErrorLength-1), sanitized)
+	})
 
-	config := DeadLetterOptions{MaxAge: 7 * 24 * time.Hour}.streamConfig(existing)
-
-	assert.Equal(t, 7*24*time.Hour, config.MaxAge)
-	assert.Equal(t, int64(10<<30), config.MaxBytes)
-	assert.Equal(t, 3, config.Replicas)
+	t.Run("keeps short values", func(t *testing.T) {
+		assert.Equal(t, "boom", sanitizeHeaderValue("boom"))
+	})
 }
