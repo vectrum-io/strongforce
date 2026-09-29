@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/nats-io/nats.go"
 	"github.com/vectrum-io/strongforce/pkg/bus"
@@ -93,6 +94,27 @@ func DeadLetterSubject(stream, consumer string) string {
 func (nb *Broadcaster) PublishDeadLetter(ctx context.Context, message bus.InboundMessage, cause error) error {
 	delivery := message.Delivery
 
+	// Stable per origin message, so a dead letter re-published after a failed
+	// Term is deduplicated by the stream.
+	msgId := fmt.Sprintf("%s:%s:%d", delivery.Stream, delivery.Consumer, delivery.StreamSequence)
+
+	ctx, cancel := context.WithTimeout(ctx, deadLetterPublishTimeout)
+	defer cancel()
+
+	_, err := nb.jetStream.PublishMsg(&nats.Msg{
+		Subject: DeadLetterSubject(delivery.Stream, delivery.Consumer),
+		Header:  deadLetterHeaders(message, cause),
+		Data:    message.Data,
+	}, nats.MsgId(msgId), nats.Context(ctx))
+
+	return err
+}
+
+// deadLetterHeaders copies the message's headers, except the NATS ones, and
+// adds the failure details.
+func deadLetterHeaders(message bus.InboundMessage, cause error) nats.Header {
+	delivery := message.Delivery
+
 	headers := nats.Header{}
 	for key, values := range message.Headers {
 		if strings.HasPrefix(key, "Nats-") {
@@ -101,7 +123,12 @@ func (nb *Broadcaster) PublishDeadLetter(ctx context.Context, message bus.Inboun
 		headers[key] = append([]string(nil), values...)
 	}
 
-	headers.Set(DeadLetterHeaderError, sanitizeHeaderValue(cause.Error()))
+	causeText := "unknown"
+	if cause != nil {
+		causeText = cause.Error()
+	}
+
+	headers.Set(DeadLetterHeaderError, sanitizeHeaderValue(causeText))
 	headers.Set(DeadLetterHeaderStream, delivery.Stream)
 	headers.Set(DeadLetterHeaderConsumer, delivery.Consumer)
 	headers.Set(DeadLetterHeaderSubject, message.Subject)
@@ -110,21 +137,7 @@ func (nb *Broadcaster) PublishDeadLetter(ctx context.Context, message bus.Inboun
 	headers.Set(DeadLetterHeaderNumDelivered, strconv.FormatUint(delivery.NumDelivered, 10))
 	headers.Set(DeadLetterHeaderFailedAt, time.Now().UTC().Format(time.RFC3339Nano))
 
-	// Stable per origin message, so a dead letter re-published after a failed
-	// Term is deduplicated by the stream.
-	msgId := fmt.Sprintf("%s:%s:%d", delivery.Stream, delivery.Consumer, delivery.StreamSequence)
-
-	// JetStream publishes with a context require a deadline.
-	ctx, cancel := context.WithTimeout(ctx, deadLetterPublishTimeout)
-	defer cancel()
-
-	_, err := nb.jetStream.PublishMsg(&nats.Msg{
-		Subject: DeadLetterSubject(delivery.Stream, delivery.Consumer),
-		Header:  headers,
-		Data:    message.Data,
-	}, nats.MsgId(msgId), nats.Context(ctx))
-
-	return err
+	return headers
 }
 
 // sanitizeHeaderValue strips line breaks, which would corrupt the header
@@ -132,7 +145,12 @@ func (nb *Broadcaster) PublishDeadLetter(ctx context.Context, message bus.Inboun
 func sanitizeHeaderValue(value string) string {
 	value = strings.NewReplacer("\r\n", " | ", "\n", " | ", "\r", " ").Replace(value)
 	if len(value) > maxDeadLetterErrorLength {
-		value = value[:maxDeadLetterErrorLength]
+		// Cut on a rune boundary so the header stays valid UTF-8.
+		cut := maxDeadLetterErrorLength
+		for cut > 0 && !utf8.RuneStart(value[cut]) {
+			cut--
+		}
+		value = value[:cut]
 	}
 	return value
 }

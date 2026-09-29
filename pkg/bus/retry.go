@@ -80,6 +80,7 @@ func (p RetryPolicy) IsUnlimited() bool {
 }
 
 // Delay returns the redelivery delay after the numDelivered-th delivery failed.
+// numDelivered counts from 1, so the first failed delivery waits InitialDelay.
 func (p RetryPolicy) Delay(numDelivered uint64) time.Duration {
 	if numDelivered < 1 {
 		numDelivered = 1

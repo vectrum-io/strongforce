@@ -545,3 +545,19 @@ func TestBusRetriesMessageThatArrivesBeforeItsHandler(t *testing.T) {
 		t.Fatal("message that arrived before its handler was lost")
 	}
 }
+
+func TestBusPublishObservesCancellationWithoutDeadline(t *testing.T) {
+	streamName := "test-publish-cancel"
+	subject := "test-publish-cancel-subject"
+	assert.NoError(t, sharedtest.CreateNatsStream(sharedtest.NATS, streamName, subject))
+
+	natsBus, err := nats.New(&nats.Options{NATSAddress: sharedtest.NATS})
+	assert.NoError(t, err)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err = natsBus.Publish(ctx, &bus.OutboundMessage{Id: "cancelled", Subject: subject, Data: []byte("x")})
+
+	assert.ErrorIs(t, err, context.Canceled)
+}
