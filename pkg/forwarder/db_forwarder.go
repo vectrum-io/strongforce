@@ -236,14 +236,16 @@ func (fw *DBForwarder) sampleOutbox(ctx context.Context) {
 	}
 	oldest, err := ulid.Parse(sample.Oldest.String)
 	if err != nil {
+		fw.logger.Sugar().Debugf("failed to sample outbox age, oldest id %q is not a ULID: %s", sample.Oldest.String, err.Error())
 		return
 	}
 	fw.metrics.setOutboxOldestAge(ctx, time.Since(oldest.Timestamp()).Seconds())
 }
 
 type pollResult struct {
-	// hasMore is set when the poll may have left rows behind: its batch was
-	// full or it ran out of budget.
+	// hasMore is set when the poll published rows and may have left some
+	// behind: its batch was full or it ran out of budget. A poll that published
+	// nothing would only select the same rows again, so it never has more.
 	hasMore bool
 }
 
@@ -314,7 +316,8 @@ func (fw *DBForwarder) processEvents(ctx context.Context) (pollResult, error) {
 		return pollResult{}, fmt.Errorf("failed to commit poll transaction: %w", err)
 	}
 
-	return pollResult{hasMore: outOfBudget || len(eventRows) == fw.pollerBatchSize}, publishErr
+	hasMore := len(publishedIds) > 0 && (outOfBudget || len(eventRows) == fw.pollerBatchSize)
+	return pollResult{hasMore: hasMore}, publishErr
 }
 
 // pollQuery selects the next batch in id order. With direct emit, rows younger
