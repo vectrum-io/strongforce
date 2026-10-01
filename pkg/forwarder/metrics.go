@@ -102,7 +102,7 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 	}
 	outboxOldestAge, err := meter.Float64Gauge(
 		"strongforce.forwarder.outbox.oldest_age",
-		metric.WithDescription("Age of the oldest row in the outbox table, sampled by the poller. Grows while events cannot be published."),
+		metric.WithDescription("Age of the oldest row in the outbox table, sampled by the poller from the timestamp of the smallest ULID event id. Grows while events cannot be published."),
 		metric.WithUnit("s"),
 	)
 	if err != nil {
