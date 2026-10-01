@@ -45,12 +45,16 @@ type SubscribeOpts struct {
 	// AckWait overrides JetStream's per-message AckWait (default 30 s on the
 	// server). Zero leaves the server default in place.
 	AckWait time.Duration
-	// RetryPolicy, DeadLetter, Metrics and Logger are handed to the
-	// bus.Subscription; see bus.SubscriptionSettings.
-	RetryPolicy bus.RetryPolicy
-	DeadLetter  bus.DeadLetterFunc
-	Metrics     *bus.Metrics
-	Logger      *zap.Logger
+	// RetryPolicy, DeadLetter, Metrics, Logger, Routes, Middleware and
+	// HandlerTimeout are handed to the bus.Subscription; see
+	// bus.SubscriptionSettings.
+	RetryPolicy    bus.RetryPolicy
+	DeadLetter     bus.DeadLetterFunc
+	Metrics        *bus.Metrics
+	Logger         *zap.Logger
+	Routes         []bus.Route
+	Middleware     []bus.Middleware
+	HandlerTimeout time.Duration
 }
 
 func (so *SubscribeOpts) validate(natsVersion *version.Version) error {
@@ -233,12 +237,15 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 		Unsubscribe: func() {
 			consumeCtx.Stop()
 		},
-		RetryPolicy: opts.RetryPolicy,
-		DeadLetter:  opts.DeadLetter,
-		Metrics:     opts.Metrics,
-		Logger:      opts.Logger,
-		Stream:      streamName,
-		Consumer:    consumer.CachedInfo().Name,
+		RetryPolicy:    opts.RetryPolicy,
+		DeadLetter:     opts.DeadLetter,
+		Metrics:        opts.Metrics,
+		Logger:         opts.Logger,
+		Stream:         streamName,
+		Consumer:       consumer.CachedInfo().Name,
+		Routes:         opts.Routes,
+		Middleware:     opts.Middleware,
+		HandlerTimeout: opts.HandlerTimeout,
 	}), nil
 }
 

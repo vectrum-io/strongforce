@@ -1,6 +1,9 @@
 package bus
 
-import "errors"
+import (
+	"errors"
+	"fmt"
+)
 
 // ErrDeliveryLimitExceeded is the dead-letter cause for a message that arrives
 // after its last attempt, e.g. because its handler kept exceeding AckWait.
@@ -32,4 +35,25 @@ func (e *permanentError) Unwrap() error {
 func IsPermanent(err error) bool {
 	var pe *permanentError
 	return errors.As(err, &pe)
+}
+
+type skipError struct {
+	reason string
+}
+
+// Skip acks a message without handling it, e.g. because the entity it refers
+// to was deleted in the meantime. The reason is logged and the message is
+// counted as skipped.
+func Skip(format string, args ...any) error {
+	return &skipError{reason: fmt.Sprintf(format, args...)}
+}
+
+func (e *skipError) Error() string {
+	return "skipped: " + e.reason
+}
+
+// IsSkip reports whether err or any error it wraps was created by Skip.
+func IsSkip(err error) bool {
+	var se *skipError
+	return errors.As(err, &se)
 }

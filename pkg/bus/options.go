@@ -23,6 +23,11 @@ var DefaultSubscriptionOptions = SubscriptionOptions{
 }
 
 type SubscriptionOptions struct {
+	// Routes are the handlers declared with Handle or HandleRaw. Their
+	// subjects become the consumer's filter subjects.
+	Routes []Route
+	// FilterSubjects restricts the consumer to these subjects. It must stay
+	// empty when Routes are declared, which provide the filter subjects.
 	FilterSubjects []string
 	GuaranteeOrder bool
 	// RetryPolicy controls redelivery of messages whose handler failed.
@@ -58,6 +63,10 @@ const (
 
 type SubscribeOption func(*SubscriptionOptions)
 
+// WithFilterSubject restricts the consumer to subject.
+//
+// Deprecated: declare handlers with Handle, which derives the filter subjects
+// from them so the consumer never receives a message it has no handler for.
 func WithFilterSubject(subject string) SubscribeOption {
 	return func(options *SubscriptionOptions) {
 		options.FilterSubjects = append(options.FilterSubjects, subject)
@@ -67,6 +76,9 @@ func WithFilterSubject(subject string) SubscribeOption {
 // WithFilterSubjects appends each subject to the consumer's FilterSubjects list.
 // Use when a single consumer needs to filter on multiple subjects (NATS >= 2.10).
 // Equivalent to chaining WithFilterSubject calls but clearer at the call site.
+//
+// Deprecated: declare handlers with Handle, which derives the filter subjects
+// from them so the consumer never receives a message it has no handler for.
 func WithFilterSubjects(subjects ...string) SubscribeOption {
 	return func(options *SubscriptionOptions) {
 		options.FilterSubjects = append(options.FilterSubjects, subjects...)

@@ -1,3 +1,5 @@
+//lint:file-ignore SA1019 these tests cover subscriptions that declare filter subjects and handlers separately
+
 package tests
 
 import (
@@ -235,8 +237,10 @@ func TestContextPropagation(t *testing.T) {
 	t.Log("wait for message to be received")
 	ctx, message, res := waitForMessage(subscription)
 	assert.Equal(t, "1", message.Id)
-	assert.Equal(t, ctx, message.MessageCtx)
-	assert.Equal(t, ctx.Value(testCtxKey{}), "test-val")
+	assert.Equal(t, "test-val", message.MessageCtx.Value(testCtxKey{}))
+	assert.Equal(t, "test-val", ctx.Value(testCtxKey{}))
+	_, hasDeadline := ctx.Deadline()
+	assert.True(t, hasDeadline, "handlers run with a deadline below AckWait")
 	res <- nil
 }
 

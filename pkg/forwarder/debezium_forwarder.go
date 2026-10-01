@@ -84,23 +84,22 @@ func (fw *DebeziumForwarder) Stop() error {
 
 func (fw *DebeziumForwarder) Start(ctx context.Context) error {
 
-	subscription, err := fw.bus.Subscribe(ctx, fw.subscriberName, fw.debeziumStream, bus.WithFilterSubject(fw.debeziumSubject), bus.WithDurable(), bus.WithGuaranteeOrder())
+	subscription, err := fw.bus.Subscribe(ctx, fw.subscriberName, fw.debeziumStream,
+		bus.HandleRaw(fw.debeziumSubject, func(ctx context.Context, message bus.InboundMessage) error {
+			debeziumMessage := &DebeziumMessage{}
+
+			if err := json.Unmarshal(message.Data, debeziumMessage); err != nil {
+				fw.logger.Sugar().Errorf("failed to emit event: %s", err.Error())
+				return fmt.Errorf("failed to unmarshal debezium message: %w", err)
+			}
+
+			return fw.processDebeziumMessage(ctx, debeziumMessage)
+		}),
+		bus.WithDurable(),
+		bus.WithGuaranteeOrder(),
+	)
 	if err != nil {
 		return fmt.Errorf("failed to subscribe to debezium stream: %w", err)
-	}
-
-	if err := subscription.AddHandler(fw.debeziumSubject, func(ctx context.Context, message bus.InboundMessage) error {
-		debeziumMessage := &DebeziumMessage{}
-
-		if err := json.Unmarshal(message.Data, debeziumMessage); err != nil {
-			fw.logger.Sugar().Errorf("failed to emit event: %s", err.Error())
-			return fmt.Errorf("failed to unmarshal debezium message: %w", err)
-		}
-
-		return fw.processDebeziumMessage(ctx, debeziumMessage)
-	}); err != nil {
-		fw.logger.Sugar().Errorf("failed to emit event: %s", err.Error())
-		return fmt.Errorf("failed to add handler to debezium stream: %w", err)
 	}
 
 	subscription.Start(ctx)

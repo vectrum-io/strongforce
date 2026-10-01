@@ -2,6 +2,7 @@ package nats
 
 import (
 	"testing"
+	"time"
 
 	"github.com/hashicorp/go-version"
 	"github.com/stretchr/testify/assert"
@@ -21,4 +22,10 @@ func TestSubscribeOptsKeepExplicitDeliveryLimit(t *testing.T) {
 	assert.NoError(t, opts.validate(version.Must(version.NewVersion("2.10.0"))))
 
 	assert.Equal(t, 5, opts.MaxDeliverTries)
+}
+
+func TestHandlerTimeoutLeavesTimeToSettleBeforeAckWait(t *testing.T) {
+	assert.Equal(t, 27*time.Second, handlerTimeout(0))
+	assert.Equal(t, 27*time.Second, handlerTimeout(30*time.Second))
+	assert.Equal(t, 270*time.Second, handlerTimeout(5*time.Minute))
 }

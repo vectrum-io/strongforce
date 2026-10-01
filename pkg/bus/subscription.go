@@ -44,6 +44,14 @@ type SubscriptionSettings struct {
 	// NoRedelivery marks messages the broker cannot redeliver, e.g. core NATS
 	// broadcasts: failed messages are reported and dropped instead of retried.
 	NoRedelivery bool
+	// Routes are registered up front and fix the handler set: AddHandler is
+	// rejected afterwards. They must have passed ValidateRoutes.
+	Routes []Route
+	// Middleware wraps every handler, the first one outermost.
+	Middleware []Middleware
+	// HandlerTimeout bounds how long the handlers of one message may run.
+	// Zero means no limit.
+	HandlerTimeout time.Duration
 }
 
 type Subscription struct {
@@ -62,6 +70,9 @@ type Subscription struct {
 	stream          string
 	consumer        string
 	noRedelivery    bool
+	middleware      []Middleware
+	handlerTimeout  time.Duration
+	declaredRoutes  bool
 }
 
 // NewSubscription builds a subscription that dispatches inbound messages to
@@ -82,7 +93,7 @@ func NewSubscriptionWithSettings(inboundMessages chan InboundMessage, settings S
 	if settings.Logger == nil {
 		settings.Logger = zap.L()
 	}
-	return &Subscription{
+	s := &Subscription{
 		unsubscribe:     settings.Unsubscribe,
 		handlers:        make(map[string]HandlerFunc),
 		inboundMessages: inboundMessages,
@@ -95,10 +106,27 @@ func NewSubscriptionWithSettings(inboundMessages chan InboundMessage, settings S
 			"stream", settings.Stream,
 			"consumer", settings.Consumer,
 		),
-		stream:       settings.Stream,
-		consumer:     settings.Consumer,
-		noRedelivery: settings.NoRedelivery,
+		stream:         settings.Stream,
+		consumer:       settings.Consumer,
+		noRedelivery:   settings.NoRedelivery,
+		middleware:     settings.Middleware,
+		handlerTimeout: settings.HandlerTimeout,
 	}
+
+	for _, route := range settings.Routes {
+		s.handlers[route.Pattern] = s.wrap(route.Handler)
+	}
+	s.declaredRoutes = len(settings.Routes) > 0
+
+	return s
+}
+
+// wrap applies the subscription's middleware to fn, the first one outermost.
+func (s *Subscription) wrap(fn HandlerFunc) HandlerFunc {
+	for i := len(s.middleware) - 1; i >= 0; i-- {
+		fn = s.middleware[i](fn)
+	}
+	return fn
 }
 
 func (s *Subscription) Stop() {
@@ -121,7 +149,14 @@ func (s *Subscription) RemoveHandler(pattern string) {
 	s.handlersMu.Unlock()
 }
 
+// AddHandler registers a handler for messages matching pattern. Subscriptions
+// whose handlers were declared with Handle or HandleRaw reject it, since their
+// filter subjects cannot change anymore.
 func (s *Subscription) AddHandler(pattern string, handlerFunc HandlerFunc) error {
+	if s.declaredRoutes {
+		return fmt.Errorf("%w: handlers of this subscription are declared with Handle", ErrHandlerRegistrationFailed)
+	}
+
 	if err := ValidatePattern(pattern); err != nil {
 		return fmt.Errorf("failed to validate pattern: %w", err)
 	}
@@ -134,7 +169,7 @@ func (s *Subscription) AddHandler(pattern string, handlerFunc HandlerFunc) error
 		return fmt.Errorf("%w: handler already registered", ErrHandlerRegistrationFailed)
 	}
 
-	s.handlers[pattern] = handlerFunc
+	s.handlers[pattern] = s.wrap(handlerFunc)
 
 	return nil
 }
@@ -178,8 +213,9 @@ func (s *Subscription) handleMessage(message InboundMessage) {
 	}
 
 	isMessageRouted := false
-	var handlerErrors []error
+	var handlerErrors, skips []error
 
+	handlerCtx, cancel := s.handlerContext(ctx)
 	start := time.Now()
 	s.handlersMu.RLock()
 	for pattern, fn := range s.handlers {
@@ -189,11 +225,17 @@ func (s *Subscription) handleMessage(message InboundMessage) {
 
 		isMessageRouted = true
 
-		if err := invokeHandler(ctx, fn, message); err != nil {
+		err := invokeHandler(handlerCtx, fn, message)
+		switch {
+		case err == nil:
+		case IsSkip(err):
+			skips = append(skips, err)
+		default:
 			handlerErrors = append(handlerErrors, err)
 		}
 	}
 	s.handlersMu.RUnlock()
+	cancel()
 
 	// A message without a matching handler is retried like a failed one, so
 	// it is not lost while handlers are still being registered, and is
@@ -206,13 +248,28 @@ func (s *Subscription) handleMessage(message InboundMessage) {
 	s.metrics.recordHandlerDuration(ctx, s.stream, s.consumer, time.Since(start), len(handlerErrors) > 0)
 
 	if len(handlerErrors) == 0 {
+		outcome := OutcomeAcked
+		if len(skips) > 0 {
+			outcome = OutcomeSkipped
+			s.logger.Infof("skipped message %s (%s): %s", message.Id, message.Subject, errors.Join(skips...))
+		}
 		if s.ack(message) {
-			s.metrics.recordOutcome(ctx, s.stream, s.consumer, OutcomeAcked)
+			s.metrics.recordOutcome(ctx, s.stream, s.consumer, outcome)
 		}
 		return
 	}
 
 	s.settleFailure(ctx, message, fmt.Errorf("%w: %w", ErrMessageHandlerFailed, errors.Join(handlerErrors...)))
+}
+
+// handlerContext bounds the handlers of one message by the handler timeout.
+// Settling uses the unbounded message context, so it still runs after the
+// handlers timed out.
+func (s *Subscription) handlerContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if s.handlerTimeout <= 0 {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, s.handlerTimeout)
 }
 
 // settleFailure reports err and naks the message for a retry, or exhausts it

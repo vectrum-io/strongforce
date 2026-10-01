@@ -2,6 +2,7 @@ package bus
 
 import (
 	"context"
+	"errors"
 	"github.com/vectrum-io/strongforce/pkg/serialization"
 	"time"
 )
@@ -54,6 +55,9 @@ type DeliveryInfo struct {
 // Unmarshal deserializes the message payload. Failures are Permanent: a payload
 // that cannot be decoded will not decode on a retry either.
 func (im *InboundMessage) Unmarshal(dst interface{}) error {
+	if im.deserializer == nil {
+		return Permanent(errors.New("message has no deserializer"))
+	}
 	if err := im.deserializer.Deserialize(im.Data, dst); err != nil {
 		return Permanent(err)
 	}

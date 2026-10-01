@@ -9,6 +9,7 @@ import (
 	"github.com/vectrum-io/strongforce/pkg/bus"
 	"go.opentelemetry.io/otel/propagation"
 	"go.uber.org/zap"
+	"time"
 )
 
 type Bus struct {
@@ -27,6 +28,22 @@ type Options struct {
 	DeadLetter DeadLetterOptions
 	// Metrics is optional; nil disables subscription metrics.
 	Metrics *bus.Metrics
+	// Middleware wraps the handlers of every subscription, the first one
+	// outermost.
+	Middleware []bus.Middleware
+}
+
+// defaultAckWait is the JetStream server default for consumers that do not
+// set AckWait.
+const defaultAckWait = 30 * time.Second
+
+// handlerTimeout leaves a tenth of AckWait to settle the message, so the
+// broker does not redeliver it while its handlers are still running.
+func handlerTimeout(ackWait time.Duration) time.Duration {
+	if ackWait <= 0 {
+		ackWait = defaultAckWait
+	}
+	return ackWait - ackWait/10
 }
 
 func New(options *Options) (*Bus, error) {
@@ -67,6 +84,18 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 	subscriptionOptions := bus.DefaultSubscriptionOptions
 	for _, opt := range opts {
 		opt(&subscriptionOptions)
+	}
+
+	filterSubjects := subscriptionOptions.FilterSubjects
+	if len(subscriptionOptions.Routes) > 0 {
+		if len(subscriptionOptions.FilterSubjects) > 0 {
+			return nil, fmt.Errorf("%w: filter subjects are derived from Handle, do not combine it with WithFilterSubject", bus.ErrInvalidRoutes)
+		}
+		patterns, err := bus.ValidateRoutes(subscriptionOptions.Routes)
+		if err != nil {
+			return nil, err
+		}
+		filterSubjects = patterns
 	}
 
 	var deliverPolicy jetstream.DeliverPolicy
@@ -114,7 +143,7 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		DurableName:     durableName,
 		CreateConsumer:  true,
 		DeliverPolicy:   &deliverPolicy,
-		FilterSubjects:  subscriptionOptions.FilterSubjects,
+		FilterSubjects:  filterSubjects,
 		MaxDeliverTries: -1,
 		MaxAckPending:   concurrency,
 		Concurrency:     concurrency,
@@ -124,6 +153,9 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		DeadLetter:      deadLetter,
 		Metrics:         b.options.Metrics,
 		Logger:          b.options.Logger,
+		Routes:          subscriptionOptions.Routes,
+		Middleware:      b.options.Middleware,
+		HandlerTimeout:  handlerTimeout(subscriptionOptions.AckWait),
 	})
 	if err != nil {
 		return nil, err
