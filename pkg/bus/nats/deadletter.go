@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	// DeadLetterStreamName is reserved: Migrate owns the stream and configures
+	// it from Options.DeadLetter, so it must not appear in Options.Streams.
 	DeadLetterStreamName    = "dead_letters"
 	DeadLetterSubjectPrefix = "dlq"
 
@@ -110,8 +112,10 @@ func (nb *Broadcaster) PublishDeadLetter(ctx context.Context, message bus.Inboun
 	return err
 }
 
-// deadLetterHeaders copies the message's headers, except the NATS ones, and
-// adds the failure details.
+// deadLetterHeaders copies the message's headers and adds the failure details.
+// Every Nats-* header is left out, including ones a producer set itself: they
+// are JetStream directives such as Nats-Msg-Id or Nats-Expected-Stream that
+// would make the server deduplicate or reject the dead letter.
 func deadLetterHeaders(message bus.InboundMessage, cause error) nats.Header {
 	delivery := message.Delivery
 

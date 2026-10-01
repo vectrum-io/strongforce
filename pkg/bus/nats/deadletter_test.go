@@ -1,6 +1,7 @@
 package nats
 
 import (
+	"context"
 	"errors"
 	"strings"
 	"testing"
@@ -88,4 +89,12 @@ func TestSanitizeHeaderValue(t *testing.T) {
 	t.Run("keeps short values", func(t *testing.T) {
 		assert.Equal(t, "boom", sanitizeHeaderValue("boom"))
 	})
+}
+
+func TestMigrateRejectsReservedDeadLetterStreamName(t *testing.T) {
+	b := &Bus{options: &Options{Streams: []nats.StreamConfig{{Name: DeadLetterStreamName}}}}
+
+	err := b.Migrate(context.Background())
+
+	assert.ErrorContains(t, err, "reserved")
 }

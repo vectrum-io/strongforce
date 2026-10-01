@@ -2,6 +2,7 @@ package bus
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 )
@@ -21,4 +22,13 @@ func TestEffectiveRetryPolicyKeepsRetryPolicyWithoutMaxDeliveryTries(t *testing.
 	WithMaxDeliveryTries(3)(&options)
 
 	assert.Equal(t, 3, options.EffectiveRetryPolicy().MaxAttempts)
+}
+
+func TestWithRetryPolicyKeepsMaxDeliveryTriesWhenUnset(t *testing.T) {
+	options := DefaultSubscriptionOptions
+	WithMaxDeliveryTries(3)(&options)
+	WithRetryPolicy(RetryPolicy{InitialDelay: time.Minute})(&options)
+
+	assert.Equal(t, 3, options.EffectiveRetryPolicy().MaxAttempts)
+	assert.Equal(t, time.Minute, options.EffectiveRetryPolicy().InitialDelay)
 }
