@@ -3,6 +3,7 @@ package bus
 import (
 	"context"
 	"errors"
+	"fmt"
 	"testing"
 	"time"
 
@@ -127,11 +128,24 @@ func TestSkipAcksMessageWithoutRetry(t *testing.T) {
 	assert.Empty(t, dl.calls)
 }
 
-func TestSkipSurvivesWrapping(t *testing.T) {
-	err := errors.Join(errors.New("context"), Skip("gone"))
+func TestSkipSurvivesWrappingWithContext(t *testing.T) {
+	err := fmt.Errorf("handle task: %w", Skip("gone"))
 
 	assert.True(t, IsSkip(err))
 	assert.False(t, IsSkip(errors.New("gone")))
+}
+
+func TestSkipJoinedWithFailureRetriesMessage(t *testing.T) {
+	sub := newRoutedSubscription(nil, HandleRaw("incidents.>", func(ctx context.Context, message InboundMessage) error {
+		return errors.Join(errors.New("cleanup failed"), Skip("incident gone"))
+	}))
+
+	message, recorder := newRecordedMessage("incidents.v1.created", 1)
+	sub.handleMessage(message)
+
+	acks, _, nakDelays := recorder.settled()
+	assert.Zero(t, acks)
+	assert.Len(t, nakDelays, 1)
 }
 
 func TestFailingHandlerRetriesMessageEvenWhenAnotherSkipped(t *testing.T) {

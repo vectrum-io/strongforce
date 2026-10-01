@@ -216,6 +216,7 @@ func (s *Subscription) handleMessage(message InboundMessage) {
 	var handlerErrors, skips []error
 
 	handlerCtx, cancel := s.handlerContext(ctx)
+	defer cancel()
 	start := time.Now()
 	s.handlersMu.RLock()
 	for pattern, fn := range s.handlers {
@@ -235,7 +236,6 @@ func (s *Subscription) handleMessage(message InboundMessage) {
 		}
 	}
 	s.handlersMu.RUnlock()
-	cancel()
 
 	// A message without a matching handler is retried like a failed one, so
 	// it is not lost while handlers are still being registered, and is

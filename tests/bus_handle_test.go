@@ -64,6 +64,7 @@ func TestBusHandleDeliversOnlyDeclaredSubjects(t *testing.T) {
 			filters = append(filters, info.Config.FilterSubject)
 		}
 		assert.Equal(t, []string{"test-handle.wanted"}, filters)
+		assert.Equal(t, 30*time.Second, info.Config.AckWait)
 		assert.Zero(t, info.NumPending)
 	}
 	assert.Empty(t, received)

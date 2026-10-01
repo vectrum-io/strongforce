@@ -21,6 +21,9 @@ type Middleware func(next HandlerFunc) HandlerFunc
 // Handle declares the handler for messages matching pattern. The payload is
 // decoded into a new T before fn runs; a payload that cannot be decoded is
 // Permanent. The pattern also becomes a filter subject of the consumer.
+//
+// T is the event's value type and is usually inferred from fn; instantiating
+// Handle with a pointer type makes every protobuf payload undecodable.
 func Handle[T any](pattern string, fn func(ctx context.Context, event *T, message InboundMessage) error) SubscribeOption {
 	return HandleRaw(pattern, func(ctx context.Context, message InboundMessage) error {
 		event := new(T)

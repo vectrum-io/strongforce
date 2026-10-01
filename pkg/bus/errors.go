@@ -43,7 +43,8 @@ type skipError struct {
 
 // Skip acks a message without handling it, e.g. because the entity it refers
 // to was deleted in the meantime. The reason is logged and the message is
-// counted as skipped.
+// counted as skipped. Wrapping a skip with %w keeps it a skip, but joining it
+// with other errors does not: the message is then retried.
 func Skip(format string, args ...any) error {
 	return &skipError{reason: fmt.Sprintf(format, args...)}
 }
@@ -52,8 +53,15 @@ func (e *skipError) Error() string {
 	return "skipped: " + e.reason
 }
 
-// IsSkip reports whether err or any error it wraps was created by Skip.
+// IsSkip reports whether err was created by Skip, possibly wrapped with %w.
+// Errors joining several errors are no skip, so a real failure next to a skip
+// is never acked.
 func IsSkip(err error) bool {
-	var se *skipError
-	return errors.As(err, &se)
+	for err != nil {
+		if _, ok := err.(*skipError); ok {
+			return true
+		}
+		err = errors.Unwrap(err)
+	}
+	return false
 }
