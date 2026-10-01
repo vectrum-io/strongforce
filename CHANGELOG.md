@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.22.0](https://github.com/vectrum-io/strongforce/compare/v0.21.0...v0.22.0) (2026-10-01)
+
+
+### Features
+
+* **bus:** build handler test messages with bustest ([1a4d2ca](https://github.com/vectrum-io/strongforce/commit/1a4d2cad624051e5a109f2937af7144807af1ed7))
+* **bus:** declare subscription handlers with Handle ([a0f3de7](https://github.com/vectrum-io/strongforce/commit/a0f3de7545cba988053a72d616b307cda85185de))
+
+
+### Bug Fixes
+
+* **bus:** set AckWait explicitly and never ack a skip joined with a failure ([df87b33](https://github.com/vectrum-io/strongforce/commit/df87b339b1bf4a344df6d43afa63891e8453fecd))
+
 ## [0.21.0](https://github.com/vectrum-io/strongforce/compare/v0.20.1...v0.21.0) (2026-10-01)
 
 
