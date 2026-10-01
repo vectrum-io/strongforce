@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.21.0](https://github.com/vectrum-io/strongforce/compare/v0.20.1...v0.21.0) (2026-10-01)
+
+
+### Features
+
+* **bus:** retry failed messages with backoff and dead-letter exhausted ones ([f270e92](https://github.com/vectrum-io/strongforce/commit/f270e9220feee27dbeac0284e887400bacb37d9c))
+
+
+### Bug Fixes
+
+* **bus:** bound dead-lettering and keep messages without a handler ([4dcafd1](https://github.com/vectrum-io/strongforce/commit/4dcafd13185a27a1a4c4b3f9faec61c41cf58893))
+* **bus:** honor publish cancellation and harden dead-letter headers ([02fb7a8](https://github.com/vectrum-io/strongforce/commit/02fb7a89ed0d209d144d4fe1b16b3fc08085dee6))
+* **bus:** keep dead-letter stream replicas when a service configures none ([91d825f](https://github.com/vectrum-io/strongforce/commit/91d825f7934fcd5f9c3eb6938b96e8c21ba77086))
+* **bus:** leave the delivery limit of direct subscriptions to the retry policy ([30c7921](https://github.com/vectrum-io/strongforce/commit/30c7921c1a4944e456d17e57a2033f6a0d6efb0d))
+* **bus:** reserve the dead-letter stream name and tidy option composition ([5c2d662](https://github.com/vectrum-io/strongforce/commit/5c2d662782661e2462717e1fb8a29c5c5e11e375))
+* **forwarder:** bound how long a poll holds its row locks ([27f7eee](https://github.com/vectrum-io/strongforce/commit/27f7eee17231d23a1fdf1121fb775419566cdab3))
+* **forwarder:** only poll again right away after a poll made progress ([b7c0f36](https://github.com/vectrum-io/strongforce/commit/b7c0f36d8f41e314034a352312c7a2df13c7b46b))
+* **forwarder:** stop the poller from blocking outbox inserts while publishing ([d5667ae](https://github.com/vectrum-io/strongforce/commit/d5667aeae445552b912f37debeca73e473297485))
+
 ## [0.20.1](https://github.com/vectrum-io/strongforce/compare/v0.20.0...v0.20.1) (2026-06-27)
 
 
