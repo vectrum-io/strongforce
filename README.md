@@ -38,7 +38,37 @@ TODO
 <!-- USAGE EXAMPLES -->
 ## Usage
 
-TODO
+### Subscribing
+
+Declare the handlers of a subscription with `bus.Handle`. The consumer only receives the subjects it has handlers for, and the payload is decoded into the handler's event type:
+
+```go
+sub, err := sf.Bus().Subscribe(ctx, "incidents", "tasks",
+	bus.WithDurable(),
+	bus.Handle("tasks.v1.task.updated.assignee", handleTaskAssigned),
+)
+if err != nil {
+	return err
+}
+sub.Start(ctx)
+
+func handleTaskAssigned(ctx context.Context, event *eventsv1.TaskAssignedEvent, msg bus.InboundMessage) error {
+	// ...
+}
+```
+
+A handler settles its message by what it returns:
+
+| Return | Outcome |
+|---|---|
+| `nil` | acked |
+| `bus.Skip("incident %s was deleted", id)` | acked, logged and counted as skipped |
+| any other error | retried with exponential backoff, dead-lettered once the attempts are used up |
+| `bus.Permanent(err)` | dead-lettered right away; undecodable payloads are permanent |
+
+Handlers run with a deadline of nine tenths of the consumer's AckWait, so the broker does not redeliver a message that is still being handled. Raise it with `bus.WithAckWait` for slow handlers.
+
+`nats.Options.Middleware` wraps the handlers of every subscription of a bus, e.g. to prepare the handler context. Handler tests build messages with `bustest.Message(id, subject)`.
 
 ## Contribution guide
 
