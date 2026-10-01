@@ -96,21 +96,17 @@ func SimpleNATSPubSub() error {
 	}
 
 	subscription, subscribeErr := sf.Bus().Subscribe(context.Background(), "test", "test",
-		bus.WithFilterSubject("test.>"),
+		bus.HandleRaw("test.howdy", func(ctx context.Context, message bus.InboundMessage) error {
+			_, span := tracer.Start(ctx, "received message")
+			defer span.End()
+
+			fmt.Printf("RECEIVED FROM NATS: %s\n", string(message.Data))
+			return nil
+		}),
 	)
 
 	if subscribeErr != nil {
 		return fmt.Errorf("failed to subscribe to topic: %w", subscribeErr)
-	}
-
-	if err := subscription.AddHandler("test.howdy", func(ctx context.Context, message bus.InboundMessage) error {
-		_, span := tracer.Start(ctx, "received message")
-		defer span.End()
-
-		fmt.Printf("RECEIVED FROM NATS: %s\n", string(message.Data))
-		return nil
-	}); err != nil {
-		return fmt.Errorf("failed to add handler: %w", err)
 	}
 
 	subscription.Start(context.Background())

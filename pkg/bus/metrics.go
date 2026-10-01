@@ -16,6 +16,7 @@ type Outcome string
 
 const (
 	OutcomeAcked            Outcome = "acked"
+	OutcomeSkipped          Outcome = "skipped"
 	OutcomeRetried          Outcome = "retried"
 	OutcomeDeadLettered     Outcome = "dead_lettered"
 	OutcomeDeadLetterFailed Outcome = "dead_letter_failed"
@@ -38,7 +39,7 @@ func NewMetrics(mp metric.MeterProvider) (*Metrics, error) {
 
 	messages, err := meter.Int64Counter(
 		"strongforce.bus.messages",
-		metric.WithDescription("Inbound messages by how the subscription settled them (acked, retried, dead_lettered, dead_letter_failed, dropped)."),
+		metric.WithDescription("Inbound messages by how the subscription settled them (acked, skipped, retried, dead_lettered, dead_letter_failed, dropped)."),
 	)
 	if err != nil {
 		return nil, err
