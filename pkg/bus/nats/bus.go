@@ -133,6 +133,12 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 }
 
 func (b *Bus) Migrate(ctx context.Context) error {
+	for _, streamConfig := range b.options.Streams {
+		if streamConfig.Name == DeadLetterStreamName {
+			return fmt.Errorf("stream name %q is reserved for the dead-letter stream, configure it with Options.DeadLetter", DeadLetterStreamName)
+		}
+	}
+
 	conn, err := nats.Connect(b.options.NATSAddress)
 	if err != nil {
 		return fmt.Errorf("failed to connect to nats: %w", err)

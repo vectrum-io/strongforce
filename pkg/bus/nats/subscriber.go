@@ -133,6 +133,10 @@ func NewSubscriber(opts *SubscriberOptions) (*Subscriber, error) {
 	}, nil
 }
 
+// BroadcastStreamLabel is the stream that logs and metrics of core-NATS
+// broadcast subscriptions are labeled with; their consumer label is the subject.
+const BroadcastStreamLabel = "core-nats"
+
 func (ns *Subscriber) SubscribeBroadcast(ctx context.Context, subject string, opts *SubscribeBroadcastOpts) (*bus.Subscription, error) {
 	if opts == nil {
 		opts = &SubscribeBroadcastOpts{}
@@ -162,7 +166,10 @@ func (ns *Subscriber) SubscribeBroadcast(ctx context.Context, subject string, op
 			_ = subscription.Drain()
 			_ = subscription.Unsubscribe()
 		},
-		Stream:       subject,
+		// There is no JetStream stream or consumer; label the subscription
+		// by its subject so metrics do not mix it with stream names.
+		Stream:       BroadcastStreamLabel,
+		Consumer:     subject,
 		NoRedelivery: true,
 	}), nil
 }

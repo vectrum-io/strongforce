@@ -99,9 +99,13 @@ func WithMaxDeliveryTries(maxTries int) SubscribeOption {
 }
 
 // WithRetryPolicy replaces the subscription's retry policy. Unset fields fall
-// back to DefaultRetryPolicy.
+// back to DefaultRetryPolicy, except a zero MaxAttempts, which keeps the
+// attempts already set, e.g. by WithMaxDeliveryTries.
 func WithRetryPolicy(policy RetryPolicy) SubscribeOption {
 	return func(options *SubscriptionOptions) {
+		if policy.MaxAttempts == 0 {
+			policy.MaxAttempts = options.RetryPolicy.MaxAttempts
+		}
 		options.RetryPolicy = policy
 	}
 }
