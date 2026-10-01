@@ -58,8 +58,11 @@ func (so *SubscribeOpts) validate(natsVersion *version.Version) error {
 		so.MaxAckPending = -1
 	}
 
+	// The subscription enforces RetryPolicy.MaxAttempts and dead-letters
+	// exhausted messages; a server-side limit would stop redelivering them
+	// before that, so there is none unless the caller sets one.
 	if so.MaxDeliverTries == 0 {
-		so.MaxDeliverTries = 10
+		so.MaxDeliverTries = -1
 	}
 
 	if so.DeliverPolicy == nil {
