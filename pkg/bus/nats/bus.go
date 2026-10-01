@@ -33,16 +33,13 @@ type Options struct {
 	Middleware []bus.Middleware
 }
 
-// defaultAckWait is the JetStream server default for consumers that do not
-// set AckWait.
+// defaultAckWait is set on consumers that do not configure AckWait, so the
+// handler timeout is derived from the AckWait the consumer really has.
 const defaultAckWait = 30 * time.Second
 
 // handlerTimeout leaves a tenth of AckWait to settle the message, so the
 // broker does not redeliver it while its handlers are still running.
 func handlerTimeout(ackWait time.Duration) time.Duration {
-	if ackWait <= 0 {
-		ackWait = defaultAckWait
-	}
 	return ackWait - ackWait/10
 }
 
@@ -120,6 +117,11 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		concurrency = 1
 	}
 
+	ackWait := subscriptionOptions.AckWait
+	if ackWait <= 0 {
+		ackWait = defaultAckWait
+	}
+
 	var durableName string
 	if subscriptionOptions.Durable {
 		durableName = subscriberName
@@ -147,7 +149,7 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		MaxDeliverTries: -1,
 		MaxAckPending:   concurrency,
 		Concurrency:     concurrency,
-		AckWait:         subscriptionOptions.AckWait,
+		AckWait:         ackWait,
 		Deserializer:    subscriptionOptions.Deserializer,
 		RetryPolicy:     subscriptionOptions.EffectiveRetryPolicy(),
 		DeadLetter:      deadLetter,
@@ -155,7 +157,7 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		Logger:          b.options.Logger,
 		Routes:          subscriptionOptions.Routes,
 		Middleware:      b.options.Middleware,
-		HandlerTimeout:  handlerTimeout(subscriptionOptions.AckWait),
+		HandlerTimeout:  handlerTimeout(ackWait),
 	})
 	if err != nil {
 		return nil, err
