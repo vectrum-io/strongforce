@@ -12,7 +12,7 @@ services:
     ports:
       - '65001:3306'
   nats:
-    image: nats:2.9
+    image: nats:2.12
     ports:
       - "23945:4222"
     command:
