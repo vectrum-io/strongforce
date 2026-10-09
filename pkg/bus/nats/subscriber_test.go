@@ -6,6 +6,7 @@ import (
 
 	"github.com/hashicorp/go-version"
 	"github.com/stretchr/testify/assert"
+	"github.com/vectrum-io/strongforce/pkg/bus"
 )
 
 func TestSubscribeOptsLeaveDeliveryLimitToRetryPolicy(t *testing.T) {
@@ -27,4 +28,11 @@ func TestSubscribeOptsKeepExplicitDeliveryLimit(t *testing.T) {
 func TestHandlerTimeoutLeavesTimeToSettleBeforeAckWait(t *testing.T) {
 	assert.Equal(t, 27*time.Second, handlerTimeout(30*time.Second))
 	assert.Equal(t, 270*time.Second, handlerTimeout(5*time.Minute))
+}
+
+func TestSubscribeOptsRejectPinnedGroupBeforeNATS211(t *testing.T) {
+	opts := SubscribeOpts{PinnedGroup: &bus.PinnedGroup{Group: "aggregation", TTL: time.Second}}
+
+	assert.Error(t, opts.validate(version.Must(version.NewVersion("2.10.25"))))
+	assert.NoError(t, opts.validate(version.Must(version.NewVersion("2.12.0"))))
 }

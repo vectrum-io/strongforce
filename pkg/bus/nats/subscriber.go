@@ -89,6 +89,10 @@ func (so *SubscribeOpts) validate(natsVersion *version.Version) error {
 		so.Deserializer = serialization.NewProtobufSerializer()
 	}
 
+	if so.PinnedGroup != nil && natsVersion.LessThan(version.Must(version.NewVersion("2.11.0"))) {
+		return fmt.Errorf("pinned priority groups need nats 2.11 or later, the server runs %s", natsVersion.String())
+	}
+
 	// only nats >= 2.10 supports multiple filter subjects
 	if natsVersion.LessThan(version.Must(version.NewVersion("2.10.0"))) {
 		if len(so.FilterSubjects) > 1 {
