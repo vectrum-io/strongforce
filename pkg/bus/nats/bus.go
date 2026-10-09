@@ -43,6 +43,18 @@ func handlerTimeout(ackWait time.Duration) time.Duration {
 	return ackWait - ackWait/10
 }
 
+// heartbeatInterval is how often a batch subscription extends the AckWait
+// of the messages it holds.
+func heartbeatInterval(ackWait time.Duration) time.Duration {
+	return ackWait / 4
+}
+
+// batchTimeout bounds a batch handler, which heartbeats keep alive past
+// AckWait, so a hung handler cannot hold its messages and pin forever.
+func batchTimeout(ackWait time.Duration) time.Duration {
+	return 10 * ackWait
+}
+
 func New(options *Options) (*Bus, error) {
 	if options.Logger == nil {
 		options.Logger = zap.L()
@@ -83,8 +95,14 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		opt(&subscriptionOptions)
 	}
 
+	if err := subscriptionOptions.ValidateBatch(); err != nil {
+		return nil, err
+	}
+
 	filterSubjects := subscriptionOptions.FilterSubjects
-	if len(subscriptionOptions.Routes) > 0 {
+	if subscriptionOptions.Batch != nil {
+		filterSubjects = []string{subscriptionOptions.Batch.Pattern}
+	} else if len(subscriptionOptions.Routes) > 0 {
 		if len(subscriptionOptions.FilterSubjects) > 0 {
 			return nil, fmt.Errorf("%w: filter subjects are derived from Handle, do not combine it with WithFilterSubject", bus.ErrInvalidRoutes)
 		}
@@ -117,6 +135,13 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		concurrency = 1
 	}
 
+	// A batch subscription holds at most one batch, handled by one worker.
+	maxAckPending := concurrency
+	if subscriptionOptions.Batch != nil {
+		concurrency = 1
+		maxAckPending = subscriptionOptions.Batch.Size
+	}
+
 	ackWait := subscriptionOptions.AckWait
 	if ackWait <= 0 {
 		ackWait = defaultAckWait
@@ -147,7 +172,7 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		DeliverPolicy:   &deliverPolicy,
 		FilterSubjects:  filterSubjects,
 		MaxDeliverTries: -1,
-		MaxAckPending:   concurrency,
+		MaxAckPending:   maxAckPending,
 		Concurrency:     concurrency,
 		AckWait:         ackWait,
 		Deserializer:    subscriptionOptions.Deserializer,
@@ -158,6 +183,11 @@ func (b *Bus) Subscribe(ctx context.Context, subscriberName string, stream strin
 		Routes:          subscriptionOptions.Routes,
 		Middleware:      b.options.Middleware,
 		HandlerTimeout:  handlerTimeout(ackWait),
+
+		Batch:             subscriptionOptions.Batch,
+		PinnedGroup:       subscriptionOptions.PinnedGroup,
+		HeartbeatInterval: heartbeatInterval(ackWait),
+		BatchTimeout:      batchTimeout(ackWait),
 	})
 	if err != nil {
 		return nil, err

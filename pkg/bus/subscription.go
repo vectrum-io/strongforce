@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/vectrum-io/strongforce/pkg/serialization"
@@ -52,6 +53,23 @@ type SubscriptionSettings struct {
 	// HandlerTimeout bounds how long the handlers of one message may run.
 	// Zero means no limit.
 	HandlerTimeout time.Duration
+	// Batch dispatches messages in batches to its handler instead of Routes.
+	// It must have passed SubscriptionOptions.ValidateBatch.
+	Batch *BatchRoute
+	// HeartbeatInterval is how often the messages a batch subscription holds
+	// are kept from redelivery with InProgress.
+	HeartbeatInterval time.Duration
+	// BatchTimeout bounds how long one batch may run. Zero means no limit.
+	BatchTimeout time.Duration
+	// Pinned reports whether the broker currently delivers to this
+	// subscriber; nil means the subscription has no pinned group.
+	Pinned func() bool
+	// Unpin releases the pin during Shutdown so another subscriber takes over
+	// right away.
+	Unpin func(ctx context.Context) error
+	// StartReceiving is called by Start, for brokers that deliver only once
+	// the subscription runs.
+	StartReceiving func(ctx context.Context)
 }
 
 type Subscription struct {
@@ -61,7 +79,7 @@ type Subscription struct {
 	handlersMu      sync.RWMutex
 	onError         ErrorCallbackFunc
 	deserializer    serialization.Serializer
-	isRunning       bool
+	isRunning       atomic.Bool
 	concurrency     int
 	retryPolicy     RetryPolicy
 	deadLetter      DeadLetterFunc
@@ -73,6 +91,25 @@ type Subscription struct {
 	middleware      []Middleware
 	handlerTimeout  time.Duration
 	declaredRoutes  bool
+
+	batch             *BatchRoute
+	batchHandler      BatchHandlerFunc
+	heartbeatInterval time.Duration
+	batchTimeout      time.Duration
+	pinned            func() bool
+	unpin             func(ctx context.Context) error
+	startReceiving    func(ctx context.Context)
+
+	// stopping is closed by Shutdown; workers finish their current work and
+	// return.
+	stopping    chan struct{}
+	stopOnce    sync.Once
+	workers     sync.WaitGroup
+	cancelWork  context.CancelFunc
+	unhandledMu sync.Mutex
+	unhandled   []InboundMessage
+	startedMu   sync.Mutex
+	started     bool
 }
 
 // NewSubscription builds a subscription that dispatches inbound messages to
@@ -111,6 +148,19 @@ func NewSubscriptionWithSettings(inboundMessages chan InboundMessage, settings S
 		noRedelivery:   settings.NoRedelivery,
 		middleware:     settings.Middleware,
 		handlerTimeout: settings.HandlerTimeout,
+
+		batch:             settings.Batch,
+		heartbeatInterval: settings.HeartbeatInterval,
+		batchTimeout:      settings.BatchTimeout,
+		pinned:            settings.Pinned,
+		unpin:             settings.Unpin,
+		startReceiving:    settings.StartReceiving,
+		stopping:          make(chan struct{}),
+	}
+
+	if s.batch != nil {
+		s.concurrency = 1
+		s.batchHandler = s.wrapBatch(s.batch)
 	}
 
 	for _, route := range settings.Routes {
@@ -136,7 +186,87 @@ func (s *Subscription) Stop() {
 }
 
 func (s *Subscription) IsRunning() bool {
-	return s.isRunning
+	return s.isRunning.Load()
+}
+
+// IsPinned reports whether this subscriber currently holds the pin of its
+// priority group. It is false for subscriptions without a pinned group.
+func (s *Subscription) IsPinned() bool {
+	return s.pinned != nil && s.pinned()
+}
+
+// Shutdown stops the subscription gracefully: no new messages are handled,
+// the messages being handled are settled, the ones received but not yet
+// handled are released for immediate redelivery, and a held pin is given up.
+// When ctx ends first, running handlers are cancelled and Shutdown waits for
+// them to return.
+func (s *Subscription) Shutdown(ctx context.Context) error {
+	s.stopOnce.Do(func() { close(s.stopping) })
+
+	if s.batch == nil {
+		// Without batching nothing is buffered between deliveries, so the
+		// consumer can stop before the workers finish.
+		s.Stop()
+	}
+
+	workersDone := make(chan struct{})
+	go func() {
+		s.workers.Wait()
+		close(workersDone)
+	}()
+
+	select {
+	case <-workersDone:
+	case <-ctx.Done():
+		s.startedMu.Lock()
+		if s.cancelWork != nil {
+			s.cancelWork()
+		}
+		s.startedMu.Unlock()
+		<-workersDone
+	}
+
+	if s.batch != nil {
+		s.Stop()
+	}
+
+	s.releaseUnhandled()
+
+	if s.unpin != nil && s.IsPinned() {
+		if err := s.unpin(context.WithoutCancel(ctx)); err != nil {
+			return fmt.Errorf("failed to unpin: %w", err)
+		}
+	}
+
+	return nil
+}
+
+// releaseUnhandled naks messages that were received but not handled, so the
+// broker redelivers them right away instead of after AckWait.
+func (s *Subscription) releaseUnhandled() {
+	s.unhandledMu.Lock()
+	unhandled := s.unhandled
+	s.unhandled = nil
+	s.unhandledMu.Unlock()
+
+	for {
+		select {
+		case message := <-s.inboundMessages:
+			unhandled = append(unhandled, message)
+			continue
+		default:
+		}
+		break
+	}
+
+	for _, message := range unhandled {
+		if message.Nak == nil {
+			continue
+		}
+		if err := message.Nak(0); err != nil {
+			s.reportError(fmt.Errorf("%w: failed to release message: %w", ErrMessageHandlerFailed, err))
+		}
+	}
 }
 
 func (s *Subscription) OnError(errorFunc ErrorCallbackFunc) {
@@ -175,22 +305,45 @@ func (s *Subscription) AddHandler(pattern string, handlerFunc HandlerFunc) error
 }
 
 func (s *Subscription) Start(ctx context.Context) {
-	s.isRunning = true
+	s.startedMu.Lock()
+	defer s.startedMu.Unlock()
+	if s.started {
+		return
+	}
+	s.started = true
+	s.isRunning.Store(true)
+
+	ctx, s.cancelWork = context.WithCancel(ctx)
+
+	if s.startReceiving != nil {
+		s.startReceiving(ctx)
+	}
+
+	if s.batch != nil {
+		s.workers.Add(1)
+		go s.runBatchWorker(ctx)
+		return
+	}
 
 	// Spawn concurrency workers all racing on the same inboundMessages channel.
 	// Go's channel receive is the synchronisation point — each message goes to
 	// exactly one worker. When ctx ends every worker observes Done on its next
 	// iteration; isRunning flips on the first worker that returns.
 	for i := 0; i < s.concurrency; i++ {
+		s.workers.Add(1)
 		go s.runWorker(ctx)
 	}
 }
 
 func (s *Subscription) runWorker(ctx context.Context) {
+	defer s.workers.Done()
 	for {
 		select {
 		case <-ctx.Done():
-			s.isRunning = false
+			s.isRunning.Store(false)
+			return
+		case <-s.stopping:
+			s.isRunning.Store(false)
 			return
 		case message := <-s.inboundMessages:
 			s.handleMessage(message)
@@ -276,7 +429,12 @@ func (s *Subscription) handlerContext(ctx context.Context) (context.Context, con
 // when err is Permanent or the message has no attempts left.
 func (s *Subscription) settleFailure(ctx context.Context, message InboundMessage, err error) {
 	s.reportError(err)
+	s.retryOrExhaust(ctx, message, err)
+}
 
+// retryOrExhaust naks a failed message for a retry, or exhausts it when err
+// is Permanent or the message has no attempts left.
+func (s *Subscription) retryOrExhaust(ctx context.Context, message InboundMessage, err error) {
 	if s.noRedelivery {
 		s.logger.Warnf("dropping message %s (%s) that cannot be redelivered: %s", message.Id, message.Subject, err)
 		s.metrics.recordOutcome(ctx, s.stream, s.consumer, OutcomeDropped)

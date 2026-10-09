@@ -26,6 +26,10 @@ type SubscriptionOptions struct {
 	// Routes are the handlers declared with Handle or HandleRaw. Their
 	// subjects become the consumer's filter subjects.
 	Routes []Route
+	// Batch is the handler declared with HandleBatch. It excludes Routes.
+	Batch *BatchRoute
+	// PinnedGroup makes the consumer deliver to one subscriber at a time.
+	PinnedGroup *PinnedGroup
 	// FilterSubjects restricts the consumer to these subjects. It must stay
 	// empty when Routes are declared, which provide the filter subjects.
 	FilterSubjects []string
@@ -52,6 +56,14 @@ type SubscriptionOptions struct {
 	// 30 s — e.g. a probe with a long timeout — to prevent JetStream from
 	// redelivering a message that's still being processed.
 	AckWait time.Duration
+}
+
+// PinnedGroup is a JetStream priority group with the pinned_client policy:
+// of all subscribers pulling with the group, the server delivers to one only
+// and moves the pin when that one stops pulling for TTL.
+type PinnedGroup struct {
+	Group string
+	TTL   time.Duration
 }
 
 type DeliveryPolicy int
@@ -160,6 +172,17 @@ func WithConcurrency(n int) SubscribeOption {
 func WithAckWait(d time.Duration) SubscribeOption {
 	return func(options *SubscriptionOptions) {
 		options.AckWait = d
+	}
+}
+
+// WithPinnedPriorityGroup creates the consumer with a pinned-client priority
+// group, so of all subscribers of the consumer only one receives messages at a
+// time. The pin moves to another subscriber when the pinned one stops pulling
+// for pinnedTTL, or right away when it stops gracefully with Shutdown.
+// Requires a batch handler and NATS 2.11 or later.
+func WithPinnedPriorityGroup(group string, pinnedTTL time.Duration) SubscribeOption {
+	return func(options *SubscriptionOptions) {
+		options.PinnedGroup = &PinnedGroup{Group: group, TTL: pinnedTTL}
 	}
 }
 

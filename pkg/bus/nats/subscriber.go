@@ -55,6 +55,13 @@ type SubscribeOpts struct {
 	Routes         []bus.Route
 	Middleware     []bus.Middleware
 	HandlerTimeout time.Duration
+	// Batch pulls the consumer's messages for a batch handler instead of
+	// consuming them one by one; see bus.SubscriptionSettings for
+	// HeartbeatInterval and BatchTimeout.
+	Batch             *bus.BatchRoute
+	PinnedGroup       *bus.PinnedGroup
+	HeartbeatInterval time.Duration
+	BatchTimeout      time.Duration
 }
 
 func (so *SubscribeOpts) validate(natsVersion *version.Version) error {
@@ -216,6 +223,11 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 			MaxAckPending:  opts.MaxAckPending,
 			AckWait:        opts.AckWait,
 		}
+		if opts.PinnedGroup != nil {
+			consumerConfig.PriorityPolicy = jetstream.PriorityPolicyPinned
+			consumerConfig.PriorityGroups = []string{opts.PinnedGroup.Group}
+			consumerConfig.PinnedTTL = opts.PinnedGroup.TTL
+		}
 
 		newConsumer, err := stream.CreateOrUpdateConsumer(ctx, consumerConfig)
 		if err != nil {
@@ -224,8 +236,12 @@ func (ns *Subscriber) Subscribe(ctx context.Context, streamName string, opts *Su
 		consumer = newConsumer
 	}
 
+	if opts.Batch != nil {
+		return ns.subscribeBatch(ctx, stream, consumer, streamName, opts)
+	}
+
 	consumeCtx, err := consumer.Consume(func(msg jetstream.Msg) {
-		ns.handleJetStreamMessage(ctx, msg, msgChan)
+		msgChan <- ns.toInboundMessage(ctx, msg)
 	})
 	if err != nil {
 		return nil, err
@@ -270,7 +286,55 @@ func (ns *Subscriber) handleNATSMessage(parentCtx context.Context, msg *nats.Msg
 	}
 }
 
-func (ns *Subscriber) handleJetStreamMessage(parentCtx context.Context, msg jetstream.Msg, msgChan chan bus.InboundMessage) {
+// subscribeBatch serves a batch handler by pulling the consumer continuously.
+func (ns *Subscriber) subscribeBatch(ctx context.Context, stream jetstream.Stream, consumer jetstream.Consumer, streamName string, opts *SubscribeOpts) (*bus.Subscription, error) {
+	logger := opts.Logger
+	if logger == nil {
+		logger = zap.L()
+	}
+	consumerName := consumer.CachedInfo().Name
+
+	// MaxAckPending is the batch size, so the channel never fills up.
+	msgChan := make(chan bus.InboundMessage, 2*opts.Batch.Size)
+
+	puller := &batchPuller{
+		consumer:  consumer,
+		stream:    stream,
+		batchSize: opts.Batch.Size,
+		expiry:    pullExpiry(opts.PinnedGroup),
+		msgChan:   msgChan,
+		toInbound: func(msg jetstream.Msg) bus.InboundMessage {
+			return ns.toInboundMessage(ctx, msg)
+		},
+		metrics: opts.Metrics,
+		logger:  logger.Sugar().With("stream", streamName, "consumer", consumerName),
+	}
+
+	settings := bus.SubscriptionSettings{
+		Deserializer:      opts.Deserializer,
+		Unsubscribe:       puller.stop,
+		RetryPolicy:       opts.RetryPolicy,
+		DeadLetter:        opts.DeadLetter,
+		Metrics:           opts.Metrics,
+		Logger:            opts.Logger,
+		Stream:            streamName,
+		Consumer:          consumerName,
+		Middleware:        opts.Middleware,
+		Batch:             opts.Batch,
+		HeartbeatInterval: opts.HeartbeatInterval,
+		BatchTimeout:      opts.BatchTimeout,
+		StartReceiving:    puller.start,
+	}
+	if opts.PinnedGroup != nil {
+		puller.group = opts.PinnedGroup.Group
+		settings.Pinned = puller.pinned
+		settings.Unpin = puller.unpin
+	}
+
+	return bus.NewSubscriptionWithSettings(msgChan, settings), nil
+}
+
+func (ns *Subscriber) toInboundMessage(parentCtx context.Context, msg jetstream.Msg) bus.InboundMessage {
 	var delivery bus.DeliveryInfo
 	if metadata, err := msg.Metadata(); err == nil {
 		delivery = bus.DeliveryInfo{
@@ -278,10 +342,11 @@ func (ns *Subscriber) handleJetStreamMessage(parentCtx context.Context, msg jets
 			Consumer:       metadata.Consumer,
 			StreamSequence: metadata.Sequence.Stream,
 			NumDelivered:   metadata.NumDelivered,
+			Published:      metadata.Timestamp,
 		}
 	}
 
-	msgChan <- bus.InboundMessage{
+	return bus.InboundMessage{
 		MessageCtx: ns.getMessageCtx(parentCtx, msg.Headers()),
 		Id:         msg.Headers().Get(jetstream.MsgIDHeader),
 		Subject:    msg.Subject(),
@@ -296,6 +361,9 @@ func (ns *Subscriber) handleJetStreamMessage(parentCtx context.Context, msg jets
 		},
 		Term: func() error {
 			return msg.Term()
+		},
+		InProgress: func() error {
+			return msg.InProgress()
 		},
 	}
 }
