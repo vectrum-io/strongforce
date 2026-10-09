@@ -310,6 +310,11 @@ func (s *Subscription) Start(ctx context.Context) {
 	if s.started {
 		return
 	}
+	select {
+	case <-s.stopping:
+		return
+	default:
+	}
 	s.started = true
 	s.isRunning.Store(true)
 
