@@ -70,6 +70,21 @@ Handlers run with a deadline of nine tenths of the consumer's AckWait, so the br
 
 `nats.Options.Middleware` wraps the handlers of every subscription of a bus, e.g. to prepare the handler context. Handler tests build messages with `bustest.Message(id, subject)`.
 
+### Batches and pinned consumers
+
+`bus.HandleBatch` hands the messages of a subject to the handler in batches of up to `bus.BatchSize(n)`, collected for at most `bus.BatchWait(d)` after the first one. Batches run one at a time; the handler returns one outcome per message (`nil`, `bus.Skip`, `bus.Permanent` or another error) and every message is settled by its own outcome. While a batch runs, its messages and the ones waiting for the next batch are kept from redelivery with `InProgress` every quarter AckWait; a batch is cancelled after ten AckWaits.
+
+`bus.WithPinnedPriorityGroup(group, ttl)` (NATS 2.11+) lets only one of all subscribers of the consumer receive messages at a time. The subscriber keeps pulling while a batch runs, so it keeps the pin; when it stops pulling the server moves the pin after `ttl`. `Subscription.Shutdown(ctx)` finishes the running batch, releases waiting messages for immediate redelivery and gives up the pin right away:
+
+```go
+subscription, err := sf.Bus().Subscribe(ctx, "alerts-aggregation-p00", "alert-aggregation",
+	bus.HandleBatch("aggregator.v2.alerts.created.0.>", handleAlerts, bus.BatchSize(500), bus.BatchWait(10*time.Second)),
+	bus.WithDurable(),
+	bus.WithPinnedPriorityGroup("aggregation", 30*time.Second),
+	bus.WithAckWait(2*time.Minute),
+)
+```
+
 ## Contribution guide
 
 ### Guidelines
