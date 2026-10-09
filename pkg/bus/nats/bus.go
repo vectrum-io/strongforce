@@ -49,8 +49,9 @@ func heartbeatInterval(ackWait time.Duration) time.Duration {
 	return ackWait / 4
 }
 
-// batchTimeout bounds a batch handler, which heartbeats keep alive past
-// AckWait, so a hung handler cannot hold its messages and pin forever.
+// batchTimeout cancels the context of a batch handler, which heartbeats keep
+// alive past AckWait. A handler that ignores the cancellation keeps running,
+// but the subscription then releases its messages and pin until it returns.
 func batchTimeout(ackWait time.Duration) time.Duration {
 	return 10 * ackWait
 }

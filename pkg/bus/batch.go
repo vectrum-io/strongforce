@@ -17,6 +17,10 @@ const (
 
 var ErrInvalidBatch = errors.New("invalid batch subscription")
 
+// MinPinnedTTL is the shortest pinned TTL: the pin holder pulls three times
+// per TTL, and a pull waits at least a second.
+const MinPinnedTTL = 3 * time.Second
+
 // ErrBatchOutcomes is the outcome of every message of a batch whose handler
 // returned a different number of outcomes than it received messages.
 var ErrBatchOutcomes = errors.New("batch handler returned the wrong number of outcomes")
@@ -149,8 +153,8 @@ func (o SubscriptionOptions) ValidateBatch() error {
 		if o.PinnedGroup.Group == "" {
 			return fmt.Errorf("%w: pinned priority group needs a name", ErrInvalidBatch)
 		}
-		if o.PinnedGroup.TTL <= 0 {
-			return fmt.Errorf("%w: pinned TTL must be positive", ErrInvalidBatch)
+		if o.PinnedGroup.TTL < MinPinnedTTL {
+			return fmt.Errorf("%w: pinned TTL must be at least %s", ErrInvalidBatch, MinPinnedTTL)
 		}
 	}
 	return nil

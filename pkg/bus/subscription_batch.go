@@ -7,6 +7,13 @@ import (
 	"time"
 )
 
+// unhandledDeliveryFactor bounds how often a batch message may be delivered
+// before it is dead-lettered without being handled. A batch subscription
+// releases the messages it holds on every handover and each release counts
+// as a delivery, so the bound is a multiple of the attempts; it still catches
+// a message that crashes its subscriber every time.
+const unhandledDeliveryFactor = 3
+
 // wrapBatch applies the subscription's middleware around a batch handler. The
 // middleware sees one message per batch that describes the batch.
 func (s *Subscription) wrapBatch(route *BatchRoute) BatchHandlerFunc {
@@ -47,6 +54,8 @@ func (s *Subscription) runBatchWorker(ctx context.Context) {
 		pending   []InboundMessage
 		running   []InboundMessage
 		done      chan []error
+		deadline  <-chan time.Time
+		stalled   bool
 		window    *time.Timer
 		windowC   <-chan time.Time
 		windowDue bool
@@ -83,6 +92,28 @@ func (s *Subscription) runBatchWorker(ctx context.Context) {
 		go func(batch []InboundMessage) {
 			done <- s.handleBatch(ctx, batch)
 		}(running)
+
+		if s.batchTimeout > 0 {
+			deadline = time.After(s.batchTimeout + s.heartbeatInterval)
+		}
+	}
+
+	// stall gives up a batch whose handler ignored its timeout: its messages
+	// are no longer kept from redelivery, and receiving stops and the pin is
+	// released, so another subscriber takes over until the handler returns.
+	stall := func() {
+		stalled = true
+		s.logger.Errorf("batch handler did not return after its %s timeout, releasing its %d messages until it does", s.batchTimeout, len(running))
+		if s.unsubscribe != nil {
+			s.unsubscribe()
+		}
+		s.release(pending)
+		pending = nil
+		if s.unpin != nil && s.IsPinned() {
+			if err := s.unpin(context.WithoutCancel(ctx)); err != nil {
+				s.reportError(fmt.Errorf("failed to unpin: %w", err))
+			}
+		}
 	}
 
 	finish := func() {
@@ -99,6 +130,7 @@ func (s *Subscription) runBatchWorker(ctx context.Context) {
 				s.settleBatch(context.WithoutCancel(ctx), running, <-done)
 			}
 			finish()
+			s.releaseUnhandled()
 			return
 
 		case <-stopping:
@@ -115,9 +147,12 @@ func (s *Subscription) runBatchWorker(ctx context.Context) {
 				message.MessageCtx = ctx
 			}
 
-			// Only reachable when a batch kept exceeding AckWait, since
-			// failed messages are settled explicitly.
-			if !s.retryPolicy.IsUnlimited() && message.Delivery.NumDelivered > uint64(s.retryPolicy.MaxAttempts) {
+			if stalled {
+				s.release([]InboundMessage{message})
+				continue
+			}
+
+			if !s.retryPolicy.IsUnlimited() && message.Delivery.NumDelivered > uint64(unhandledDeliveryFactor*s.retryPolicy.MaxAttempts) {
 				s.exhaust(message.MessageCtx, message, ErrDeliveryLimitExceeded)
 				continue
 			}
@@ -134,17 +169,29 @@ func (s *Subscription) runBatchWorker(ctx context.Context) {
 			windowDue = true
 			dispatch()
 
+		case <-deadline:
+			deadline = nil
+			stall()
+
 		case outcomes := <-done:
 			s.settleBatch(ctx, running, outcomes)
-			running, done = nil, nil
+			running, done, deadline = nil, nil, nil
 			if draining {
 				finish()
 				return
 			}
+			if stalled {
+				stalled = false
+				if s.startReceiving != nil {
+					s.startReceiving(ctx)
+				}
+			}
 			dispatch()
 
 		case <-heartbeat.C:
-			s.keepInProgress(running)
+			if !stalled {
+				s.keepInProgress(running)
+			}
 			s.keepInProgress(pending)
 		}
 	}

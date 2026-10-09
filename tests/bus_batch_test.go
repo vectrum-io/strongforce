@@ -215,7 +215,7 @@ func TestPinMovesAfterTTLWhenPinnedSubscriberStopsPulling(t *testing.T) {
 	stream, subject := newBatchStream(t)
 	natsBus := newMigratedBus(t)
 	receivers := map[string]*batchReceiver{"first": newBatchReceiver("first"), "second": newBatchReceiver("second")}
-	ttl := 2 * time.Second
+	ttl := bus.MinPinnedTTL
 
 	subscriptions := map[string]*bus.Subscription{
 		"first":  subscribePinned(t, natsBus, stream, stream, subject, receivers["first"], ttl),
@@ -243,7 +243,7 @@ func TestPinIsKeptWhileBatchRunsLongerThanTTL(t *testing.T) {
 	stream, subject := newBatchStream(t)
 	natsBus := newMigratedBus(t)
 	receivers := map[string]*batchReceiver{"first": newBatchReceiver("first"), "second": newBatchReceiver("second")}
-	ttl := time.Second
+	ttl := bus.MinPinnedTTL
 
 	subscriptions := map[string]*bus.Subscription{
 		"first":  subscribePinned(t, natsBus, stream, stream, subject, receivers["first"], ttl),
@@ -259,7 +259,7 @@ func TestPinIsKeptWhileBatchRunsLongerThanTTL(t *testing.T) {
 	holder := pinnedOf(t, subscriptions)
 	waitForBatch(t, receivers[holder], 5*time.Second)
 
-	receivers[holder].setHold(4 * ttl)
+	receivers[holder].setHold(2 * ttl)
 	publishBatchEvents(t, natsBus, subject, "slow")
 	waitForBatch(t, receivers[holder], 5*time.Second)
 
