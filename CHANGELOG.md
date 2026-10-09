@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.23.0](https://github.com/vectrum-io/strongforce/compare/v0.22.0...v0.23.0) (2026-10-09)
+
+
+### Features
+
+* **bus:** batch handlers and pinned priority groups ([e548297](https://github.com/vectrum-io/strongforce/commit/e548297ff254433f50f046846d8fa24b994dacfa))
+
+
+### Bug Fixes
+
+* **bus:** do not start a subscription that was shut down ([32cd7b0](https://github.com/vectrum-io/strongforce/commit/32cd7b03f0609eabe831f238816df9ba24be95c1))
+* **bus:** harden batch subscriptions against handovers and hung handlers ([b7e3fd9](https://github.com/vectrum-io/strongforce/commit/b7e3fd9c3d94b08ca6ed85c7d797581405a763b8))
+* **bus:** reject pinned priority groups on NATS before 2.11 ([90eb337](https://github.com/vectrum-io/strongforce/commit/90eb337cd9ffd95c04b4671db7e51c426f6b7d0e))
+* **bus:** reset the batch window when a batch stalls ([a4b8b65](https://github.com/vectrum-io/strongforce/commit/a4b8b656e010955297ef4da0c85948baae2c8162))
+
 ## [0.22.0](https://github.com/vectrum-io/strongforce/compare/v0.21.0...v0.22.0) (2026-10-01)
 
 
