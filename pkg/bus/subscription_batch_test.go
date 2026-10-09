@@ -657,3 +657,55 @@ func TestShutdownRacingStartLeavesNothingReceiving(t *testing.T) {
 		assert.Zero(t, receiving.Load(), "receiving after Shutdown returned")
 	}
 }
+
+func TestBatchAfterStallWaitsForItsWindow(t *testing.T) {
+	const wait = 100 * time.Millisecond
+	release := make(chan struct{})
+	started := make(chan struct{})
+	var receiving atomic.Int32
+	handled := make(chan time.Time, 1)
+
+	sub, inbound := newBatchSubscription(t, batchSubscriptionSettings{
+		size:      10,
+		wait:      wait,
+		heartbeat: 10 * time.Millisecond,
+		timeout:   30 * time.Millisecond,
+		receive:   func(ctx context.Context) { receiving.Add(1) },
+	}, func(ctx context.Context, messages []Message[batchEvent]) []error {
+		switch messages[0].Event.Name {
+		case "hung":
+			close(started)
+			<-release
+		case "after":
+			handled <- time.Now()
+		}
+		return make([]error, len(messages))
+	})
+	sub.Start(context.Background())
+
+	hung, _ := newBatchMessage("hung", 1)
+	inbound <- hung
+	<-started
+	// Opens a window that would expire while the batch is stalled.
+	waiting, waitingRec := newBatchMessage("waiting", 1)
+	inbound <- waiting
+	eventually(t, func() bool {
+		_, _, naks := waitingRec.settled()
+		return len(naks) == 1
+	})
+	time.Sleep(2 * wait)
+
+	close(release)
+	eventually(t, func() bool { return receiving.Load() == 2 })
+
+	sent := time.Now()
+	after, _ := newBatchMessage("after", 1)
+	inbound <- after
+
+	select {
+	case at := <-handled:
+		assert.GreaterOrEqual(t, at.Sub(sent), wait, "the first batch after a stall skipped its window")
+	case <-time.After(2 * time.Second):
+		t.Fatal("batch after the stall was not handled")
+	}
+}
