@@ -109,6 +109,10 @@ func (s *Subscription) runBatchWorker(ctx context.Context) {
 		}
 		s.release(pending)
 		pending = nil
+		if window != nil {
+			window.Stop()
+		}
+		window, windowC, windowDue = nil, nil, false
 		if s.unpin != nil && s.IsPinned() {
 			if err := s.unpin(context.WithoutCancel(ctx)); err != nil {
 				s.reportError(fmt.Errorf("failed to unpin: %w", err))
