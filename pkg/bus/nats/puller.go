@@ -17,7 +17,7 @@ const (
 	pinIDHeader = "Nats-Pin-Id"
 	// maxPullExpiry bounds how long one pull request waits for messages.
 	maxPullExpiry = 30 * time.Second
-	minPullExpiry = time.Second
+	minPullExpiry = bus.MinPinnedTTL / 3
 	// pullRetryDelay is the pause after a pull request failed.
 	pullRetryDelay = time.Second
 )
@@ -68,6 +68,7 @@ func (p *batchPuller) start(ctx context.Context) {
 }
 
 // stop ends pulling and waits until every pulled message was handed on.
+// Pulling can be started again afterwards.
 func (p *batchPuller) stop() {
 	p.mu.Lock()
 	cancel, done := p.cancel, p.done
@@ -77,6 +78,10 @@ func (p *batchPuller) stop() {
 	}
 	cancel()
 	<-done
+
+	p.mu.Lock()
+	p.cancel, p.done = nil, nil
+	p.mu.Unlock()
 }
 
 func (p *batchPuller) run(ctx context.Context) {

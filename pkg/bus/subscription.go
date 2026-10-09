@@ -201,7 +201,10 @@ func (s *Subscription) IsPinned() bool {
 // When ctx ends first, running handlers are cancelled and Shutdown waits for
 // them to return.
 func (s *Subscription) Shutdown(ctx context.Context) error {
+	// Under startedMu, so Start either ran completely or does nothing.
+	s.startedMu.Lock()
 	s.stopOnce.Do(func() { close(s.stopping) })
+	s.startedMu.Unlock()
 
 	if s.batch == nil {
 		// Without batching nothing is buffered between deliveries, so the
@@ -259,7 +262,12 @@ func (s *Subscription) releaseUnhandled() {
 		break
 	}
 
-	for _, message := range unhandled {
+	s.release(unhandled)
+}
+
+// release naks messages for immediate redelivery.
+func (s *Subscription) release(messages []InboundMessage) {
+	for _, message := range messages {
 		if message.Nak == nil {
 			continue
 		}

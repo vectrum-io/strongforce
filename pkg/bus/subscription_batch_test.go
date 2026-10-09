@@ -65,6 +65,9 @@ type batchSubscriptionSettings struct {
 	middleware []Middleware
 	pinned     func() bool
 	unpin      func(ctx context.Context) error
+	timeout    time.Duration
+	stop       func()
+	receive    func(ctx context.Context)
 }
 
 func newBatchSubscription(t *testing.T, cfg batchSubscriptionSettings, handler func(ctx context.Context, messages []Message[batchEvent]) []error) (*Subscription, chan InboundMessage) {
@@ -95,6 +98,9 @@ func newBatchSubscription(t *testing.T, cfg batchSubscriptionSettings, handler f
 		HeartbeatInterval: cfg.heartbeat,
 		Pinned:            cfg.pinned,
 		Unpin:             cfg.unpin,
+		BatchTimeout:      cfg.timeout,
+		Unsubscribe:       cfg.stop,
+		StartReceiving:    cfg.receive,
 	})
 	return sub, inbound
 }
@@ -292,7 +298,7 @@ func TestBatchRetriesEveryMessageWhenHandlerPanics(t *testing.T) {
 	assert.Equal(t, int32(1), reported.Load(), "one failure of a batch is reported once")
 }
 
-func TestBatchDeadLettersExhaustedMessageWithoutHandlingIt(t *testing.T) {
+func TestBatchDeadLettersMessageThatKeepsCrashingItsSubscriber(t *testing.T) {
 	dl := &syncDeadLetters{}
 	batches := make(chan []string, 1)
 	sub, inbound := newBatchSubscription(t, batchSubscriptionSettings{size: 1, deadLetter: dl.deadLetter}, func(ctx context.Context, messages []Message[batchEvent]) []error {
@@ -300,7 +306,7 @@ func TestBatchDeadLettersExhaustedMessageWithoutHandlingIt(t *testing.T) {
 		return make([]error, len(messages))
 	})
 
-	exhausted, _ := newBatchMessage("exhausted", 4)
+	exhausted, _ := newBatchMessage("exhausted", uint64(unhandledDeliveryFactor*testRetryPolicy.MaxAttempts+1))
 	fresh, _ := newBatchMessage("fresh", 1)
 	inbound <- exhausted
 	inbound <- fresh
@@ -500,11 +506,15 @@ func TestValidateBatchRejectsInvalidSubscriptions(t *testing.T) {
 			Batch: &BatchRoute{Pattern: "a.>", Handler: handler, Size: 1},
 		},
 		"pinned group without batch": {
-			PinnedGroup: &PinnedGroup{Group: "g", TTL: time.Second},
+			PinnedGroup: &PinnedGroup{Group: "g", TTL: MinPinnedTTL},
 		},
 		"pinned group without TTL": {
 			Batch:       &BatchRoute{Pattern: "a.>", Handler: handler, Size: 1, Wait: time.Second},
 			PinnedGroup: &PinnedGroup{Group: "g"},
+		},
+		"pinned TTL too short to keep the pin": {
+			Batch:       &BatchRoute{Pattern: "a.>", Handler: handler, Size: 1, Wait: time.Second},
+			PinnedGroup: &PinnedGroup{Group: "g", TTL: time.Second},
 		},
 	}
 
@@ -533,4 +543,117 @@ func TestStartAfterShutdownDoesNothing(t *testing.T) {
 
 	assert.False(t, receiving.Load())
 	assert.False(t, sub.IsRunning())
+}
+
+func TestBatchHandlesMessageReleasedAsOftenAsItsAttempts(t *testing.T) {
+	dl := &syncDeadLetters{}
+	batches := make(chan []string, 1)
+	sub, inbound := newBatchSubscription(t, batchSubscriptionSettings{size: 1, deadLetter: dl.deadLetter}, func(ctx context.Context, messages []Message[batchEvent]) []error {
+		batches <- names(messages)
+		return make([]error, len(messages))
+	})
+
+	// Released on MaxAttempts handovers, so this is its next delivery.
+	released, recorder := newBatchMessage("released", uint64(testRetryPolicy.MaxAttempts+1))
+	inbound <- released
+	sub.Start(context.Background())
+
+	select {
+	case batch := <-batches:
+		assert.Equal(t, []string{"released"}, batch)
+	case <-time.After(2 * time.Second):
+		t.Fatal("released message was not handled")
+	}
+	eventually(t, func() bool {
+		acks, _, _ := recorder.settled()
+		return acks == 1
+	})
+	assert.Empty(t, dl.ids())
+}
+
+func TestBatchReleasesMessagesAndPinOfHandlerThatIgnoresItsTimeout(t *testing.T) {
+	release := make(chan struct{})
+	var stopped, unpinned atomic.Bool
+	var receiving atomic.Int32
+	started := make(chan struct{})
+
+	sub, inbound := newBatchSubscription(t, batchSubscriptionSettings{
+		size:      1,
+		heartbeat: 10 * time.Millisecond,
+		timeout:   30 * time.Millisecond,
+		pinned:    func() bool { return !unpinned.Load() },
+		unpin: func(ctx context.Context) error {
+			unpinned.Store(true)
+			return nil
+		},
+		stop:    func() { stopped.Store(true) },
+		receive: func(ctx context.Context) { receiving.Add(1) },
+	}, func(ctx context.Context, messages []Message[batchEvent]) []error {
+		if messages[0].Event.Name == "hung" {
+			close(started)
+			<-release
+		}
+		return make([]error, len(messages))
+	})
+	sub.Start(context.Background())
+
+	hung, hungRec := newBatchMessage("hung", 1)
+	inbound <- hung
+	<-started
+	waiting, waitingRec := newBatchMessage("waiting", 1)
+	inbound <- waiting
+
+	eventually(t, func() bool { return stopped.Load() && unpinned.Load() })
+	eventually(t, func() bool {
+		_, _, naks := waitingRec.settled()
+		return len(naks) == 1 && naks[0] == 0
+	})
+
+	heartbeats := hungRec.inProgress.Load()
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, heartbeats, hungRec.inProgress.Load(), "a stalled batch is no longer kept from redelivery")
+
+	close(release)
+	eventually(t, func() bool {
+		acks, _, _ := hungRec.settled()
+		return acks == 1 && receiving.Load() == 2
+	})
+}
+
+func TestBatchReleasesWaitingMessagesWhenStartContextEnds(t *testing.T) {
+	sub, inbound := newBatchSubscription(t, batchSubscriptionSettings{size: 10, wait: time.Hour}, func(ctx context.Context, messages []Message[batchEvent]) []error {
+		return make([]error, len(messages))
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	sub.Start(ctx)
+
+	waiting, recorder := newBatchMessage("waiting", 1)
+	inbound <- waiting
+	eventually(t, func() bool { return len(inbound) == 0 })
+	cancel()
+
+	eventually(t, func() bool {
+		_, _, naks := recorder.settled()
+		return len(naks) == 1 && naks[0] == 0
+	})
+}
+
+func TestShutdownRacingStartLeavesNothingReceiving(t *testing.T) {
+	for range 200 {
+		var receiving atomic.Int32
+		sub, _ := newBatchSubscription(t, batchSubscriptionSettings{
+			stop:    func() { receiving.Store(0) },
+			receive: func(ctx context.Context) { receiving.Store(1) },
+		}, func(ctx context.Context, messages []Message[batchEvent]) []error {
+			return make([]error, len(messages))
+		})
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() { defer wg.Done(); sub.Start(context.Background()) }()
+		go func() { defer wg.Done(); assert.NoError(t, sub.Shutdown(context.Background())) }()
+		wg.Wait()
+
+		assert.Zero(t, receiving.Load(), "receiving after Shutdown returned")
+	}
 }
