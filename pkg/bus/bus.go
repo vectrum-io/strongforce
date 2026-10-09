@@ -38,7 +38,10 @@ type InboundMessage struct {
 	Ack        func() error
 	Nak        func(retryAfter time.Duration) error
 	// Term stops all further redeliveries of the message.
-	Term         func() error
+	Term func() error
+	// InProgress resets the message's AckWait. It is nil for messages that
+	// have no delivery tracking.
+	InProgress   func() error
 	deserializer serialization.Serializer
 }
 
@@ -50,6 +53,8 @@ type DeliveryInfo struct {
 	StreamSequence uint64
 	// NumDelivered counts deliveries of this message, starting at 1.
 	NumDelivered uint64
+	// Published is when the stream stored the message.
+	Published time.Time
 }
 
 // Unmarshal deserializes the message payload. Failures are Permanent: a payload
