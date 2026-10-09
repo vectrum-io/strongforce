@@ -514,3 +514,23 @@ func TestValidateBatchRejectsInvalidSubscriptions(t *testing.T) {
 		})
 	}
 }
+
+func TestStartAfterShutdownDoesNothing(t *testing.T) {
+	var receiving atomic.Bool
+	options := SubscriptionOptions{}
+	HandleBatch("aggregation.created.>", func(ctx context.Context, messages []Message[batchEvent]) []error {
+		return make([]error, len(messages))
+	})(&options)
+
+	sub := NewSubscriptionWithSettings(make(chan InboundMessage), SubscriptionSettings{
+		Batch:             options.Batch,
+		HeartbeatInterval: time.Hour,
+		StartReceiving:    func(ctx context.Context) { receiving.Store(true) },
+	})
+
+	assert.NoError(t, sub.Shutdown(context.Background()))
+	sub.Start(context.Background())
+
+	assert.False(t, receiving.Load())
+	assert.False(t, sub.IsRunning())
+}
